@@ -74,7 +74,10 @@ Logic:
 - Parse mỗi sự kiện: `time` (chuyển đổi tz → UTC), `currency`, `impact` (chuẩn hoá về
   `high`/`medium`/`low`).
 - Ghi CSV theo đúng format đã định nghĩa sẵn trong docstring `news.py`:
-  `time,currency,impact` (time ISO UTC).
+  `time,currency,impact` (time ISO UTC). Script ghi **TẤT CẢ** currency/impact lấy
+  được từ nguồn (không lọc trước) — việc lọc `impact=high` + `currency ∈
+  cfg.news_currencies` là trách nhiệm của `in_news_blackout` lúc đọc (Component 2),
+  để đổi phạm vi lọc sau này không cần chạy lại script backfill.
 - Chế độ `--refresh`: đọc CSV cũ, append sự kiện mới, dedupe theo `(time, currency)`
   trước khi ghi lại — an toàn khi chạy lại nhiều lần / chạy lỡ tay 2 lần.
 
