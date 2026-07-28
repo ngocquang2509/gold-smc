@@ -43,4 +43,12 @@ def in_news_blackout(ts, cfg) -> bool:
     if relevant.empty:
         return False
     window = pd.Timedelta(minutes=cfg.news_buffer_min)
-    return bool(((relevant["time"] - ts).abs() <= window).any())
+    hits = relevant[(relevant["time"] - ts).abs() <= window]
+    if not hits.empty:
+        ev = hits.iloc[0]
+        log.debug(
+            f"Chặn vào lệnh (news blackout) tại ts={ts} — sự kiện {ev['currency']} "
+            f"impact={ev['impact']} lúc {ev['time']} (buffer ±{cfg.news_buffer_min} phút)."
+        )
+        return True
+    return False

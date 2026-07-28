@@ -224,7 +224,7 @@ def main(cfg):
             if pre_weekend_guard(now, cfg):
                 time.sleep(cfg.poll_seconds)
                 continue
-            # #7 — Cấm vào lệnh quanh tin mạnh (stub: luôn False khi tắt).
+            # #7 — Cấm vào lệnh quanh tin mạnh (news_filter_enabled=False mặc định).
             if in_news_blackout(now, cfg):
                 time.sleep(cfg.poll_seconds)
                 continue

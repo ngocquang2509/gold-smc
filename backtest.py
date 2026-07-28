@@ -172,7 +172,7 @@ def run_backtest(htf: pd.DataFrame, ltf: pd.DataFrame, cfg, initial_balance: flo
             continue
         if pre_weekend_guard(now, cfg):
             continue
-        if in_news_blackout(now, cfg):   # #7 stub — luôn False khi tắt (backtest bất biến)
+        if in_news_blackout(now, cfg):   # #7 — news_filter_enabled=False mặc định (backtest bất biến)
             continue
         if i - last_exit_i < cfg.cooldown_bars:
             continue
