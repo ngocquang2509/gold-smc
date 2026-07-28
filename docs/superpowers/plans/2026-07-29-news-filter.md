@@ -43,7 +43,11 @@ Try `https://nfs.faireconomy.media/ff_calendar_lastweek.json`. If it succeeds, y
 
 - [ ] **Step 4: Record the decision**
 
-Because the endpoint only covers a ~3-week rolling window, `--refresh` mode (Task 4) covers **live use only**. Backfilling the 2-year backtest window requires a separately-obtained historical file, ingested via a `--normalize-file` mode (also Task 4) — **you (the user) will need to source that historical file yourself** (e.g., a manual ForexFactory calendar export, or a third-party historical dataset you trust) once this plan reaches Task 6. This plan does not fetch or guess a URL for that file. If Step 1 revealed different JSON key names than assumed above, update Task 4's `_events_to_df` accordingly before proceeding.
+**RESOLVED (spike run 2026-07-29):** `ff_calendar_nextweek.json` and `ff_calendar_lastweek.json` both return a genuine HTTP 404 — they don't exist at all. Only `ff_calendar_thisweek.json` works. So there's no 3-week rolling window, just a single current-week snapshot. `--refresh` mode (Task 4) fetches **only** `thisweek` — do not build `nextweek`/`lastweek` fetch logic, it would be dead code hitting permanent 404s. Backfilling the 2-year backtest window requires a separately-obtained historical file, ingested via a `--normalize-file` mode (also Task 4) — **you (the user) will need to source that historical file yourself** once this plan reaches Task 6. This plan does not fetch or guess a URL for that file.
+
+Confirmed JSON shape from the live probe: keys are `title`, `country`, `date`, `impact`, `forecast`, `previous`. `country` is a 3-letter currency code (`USD`, `EUR`, `JPY`, ...), not a country name. `date` is a single combined ISO-8601 string **with a timezone offset** (e.g. `2026-07-26T19:50:00-04:00` — US/Eastern, not UTC) — Task 4's `_events_to_df` must parse this as timezone-aware and convert to naive UTC, not assume the string is already UTC. `impact` values observed: `"High"`, `"Medium"`, `"Low"` (capitalized) — `"Holiday"` didn't appear in this sample week but the mapping should still handle it defensively.
+
+Also observed: repeated requests within ~10s of each other trigger a Cloudflare 429 with `Retry-After: 300`. Not a concern for the intended usage pattern (manual, roughly weekly), so no retry/backoff logic is being added — just don't hammer the endpoint when testing.
 
 ---
 
@@ -268,7 +272,7 @@ Expected: **fails** with `ModuleNotFoundError: No module named 'fetch_forexfacto
 
 - [ ] **Step 2: Implement the script**
 
-Use the exact JSON key names confirmed in Task 1 Step 1 (`title`/`country`/`date`/`impact` assumed below — adjust if Task 1 found different names):
+Confirmed live (Task 1 spike, 2026-07-29): JSON key names are `title`/`country`/`date`/`impact`; `date` is timezone-aware ISO-8601 (e.g. `-04:00` offset, NOT UTC); `country` is a currency code; only `ff_calendar_thisweek.json` exists — `nextweek`/`lastweek` both 404. Build accordingly:
 
 ```python
 """
@@ -277,12 +281,14 @@ currency/impact vào CSV chuẩn `time,currency,impact` (time = ISO naive UTC) �
 news.py lọc impact=high/currency lúc đọc, không lọc ở đây.
 
 Chế độ:
-    --refresh            Lấy tuần này + tuần sau từ ForexFactory (nfs.faireconomy.media),
-                          append + dedupe vào --out. Dùng cho live (chạy định kỳ, vd mỗi CN).
+    --refresh            Lấy tuần HIỆN TẠI từ ForexFactory (nfs.faireconomy.media/
+                          ff_calendar_thisweek.json — endpoint duy nhất tồn tại, đã
+                          xác nhận nextweek/lastweek đều 404), append + dedupe vào
+                          --out. Dùng cho live (chạy định kỳ, vd mỗi CN).
     --normalize-file F    Chuẩn hoá 1 file JSON (định dạng ForexFactory) hoặc CSV đã có sẵn
                           cột time/currency/impact, dùng để BACKFILL lịch sử — endpoint FF
-                          chỉ có cửa sổ ~3 tuần (last/this/next), KHÔNG hỗ trợ tuần quá khứ
-                          tuỳ ý (xem docs/superpowers/specs/2026-07-28-news-filter-design.md).
+                          KHÔNG hỗ trợ tuần quá khứ tuỳ ý, chỉ có tuần hiện tại (xem
+                          docs/superpowers/specs/2026-07-28-news-filter-design.md).
 """
 import argparse
 import json
@@ -291,10 +297,7 @@ import urllib.request
 
 import pandas as pd
 
-FF_URLS = {
-    "thisweek": "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
-    "nextweek": "https://nfs.faireconomy.media/ff_calendar_nextweek.json",
-}
+FF_THISWEEK_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 IMPACT_MAP = {"High": "high", "Medium": "medium", "Low": "low", "Holiday": "low"}
 
 
@@ -332,7 +335,7 @@ def _merge_and_write(new_df: pd.DataFrame, out_path: str):
 
 
 def refresh(out_path: str):
-    events = _fetch_json(FF_URLS["thisweek"]) + _fetch_json(FF_URLS["nextweek"])
+    events = _fetch_json(FF_THISWEEK_URL)
     _merge_and_write(_events_to_df(events), out_path)
 
 
@@ -383,7 +386,7 @@ print(df['time'].min(), '->', df['time'].max())
 "
 rm data/news_calendar_smoketest.csv
 ```
-Expected: a nonzero event count, a spread of impact levels, and a time range spanning roughly the current + next week. Delete the smoke-test file afterward — it's not the real data file.
+Expected: a nonzero event count, a spread of impact levels, and a time range spanning roughly the current calendar week only. Delete the smoke-test file afterward — it's not the real data file. Note: don't re-run this within ~10s of Task 1's spike probes or each other — the endpoint 429s (Cloudflare `Retry-After: 300`) under rapid repeated requests.
 
 - [ ] **Step 5: Commit**
 
