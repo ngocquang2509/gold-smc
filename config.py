@@ -92,6 +92,7 @@ class TradingConfig:
     news_filter_enabled: bool = False
     news_csv: str = ""              # đường dẫn CSV sự kiện lịch sử (time,currency,impact)
     news_buffer_min: int = 15       # cấm vào lệnh trong ±phút quanh tin impact cao
+    news_currencies: tuple = ("USD", "XAU")  # currency filter cho blackout (mặc định vàng)
 
     # ── Risk Management ──────────────────────────────────
     risk_per_trade_pct: float = 1.15   # % tài khoản mỗi lệnh (1.15% để đạt mục tiêu ~30%/năm)
@@ -171,6 +172,7 @@ XAUUSD = TradingConfig(
 EURUSD = TradingConfig(
     symbol="EURUSDm",
     magic_number=20260724,          # magic RIÊNG — chạy live song song không đụng lệnh vàng
+    news_currencies=("USD", "EUR"),
     # scale giá forex 5-số (1 pip = 0.0001)
     price_digits=5,
     eq_tolerance=0.0005,            # gộp equal H/L trong 5 pip
