@@ -1,0 +1,2 @@
+ticket,symbol,mode,created,direction,entry,sl,tp,lot,rr,risk_amount,reason,result,closed,close_price,profit
+2291060165,EURUSDm,live,2026-07-27T14:24:08,sell,1.13784,1.13986,1.13178,0.94,3.0,190.89,HTF bearish | buyside_sweep @ 1.14 | BOS LTF | entry OB,open,,,
