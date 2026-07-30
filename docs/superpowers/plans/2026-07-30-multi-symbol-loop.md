@@ -418,8 +418,11 @@ chữ ký thành `main(symbol_names: list[str])`, nhưng khối `if __name__ ==
 "__main__":` (Task 5, chưa chạy) vẫn còn gọi `main(get_config(args.symbol))` —
 tức truyền 1 `TradingConfig` object thay vì `list[str]`. `python -c "import
 main"` ở Step 2 dưới đây PASS bình thường (import không chạy khối
-`__main__`), nhưng `python main.py --symbol XAUUSDm` sẽ CRASH ở commit này
-(`build_runner` gọi `name.lower()` trên 1 object không phải string). Đây là
+`__main__`), nhưng `python main.py --symbol XAUUSDm` sẽ CRASH ở commit này —
+`main()` chạy `for n in (build_runner(n) for n in symbol_names) ...`
+(`symbol_names` lúc này thực chất là 1 `TradingConfig` object, không phải
+list), nên generator expression raise ngay `TypeError: 'TradingConfig' object
+is not iterable` — `build_runner` còn chưa kịp được gọi lần nào. Đây là
 trạng thái trung gian CHẤP NHẬN ĐƯỢC trong 1 phiên làm việc liên tục — Task 5
 chạy ngay sau đó khớp nối lại CLI — nhưng nếu dừng giữa chừng ở đúng commit
 này (vd. `git bisect`, review theo từng commit riêng lẻ), `main.py` chưa chạy
