@@ -340,7 +340,7 @@ runner = m.SymbolRunner(cfg=cfg, client=FakeClient(datetime(2026, 1, 1, 10, 0, 0
                         symbol_info={"contract_size": 100.0})
 
 with patch.object(m, "manage_open_positions"), patch.object(m, "reconcile_journal"), \
-     patch.object(m.log, "warning") as warn:
+     patch.object(m.log, "warning") as warn, patch.object(m.time, "sleep") as sleep_mock:
     m.process_symbol(runner)                                    # t=10:00:00 -> warn #1
     runner.client.t = datetime(2026, 1, 1, 10, 0, 10)            # +10s, còn trong 300s
     m.process_symbol(runner)                                     # KHÔNG warn thêm
@@ -348,12 +348,19 @@ with patch.object(m, "manage_open_positions"), patch.object(m, "reconcile_journa
     m.process_symbol(runner)                                     # warn #2
 
 assert warn.call_count == 2, f"Kỳ vọng 2 lần warning, thực tế {warn.call_count}"
-print("OK: throttle daily-loss-warn hoạt động đúng (2 lần warn, không phải 3)")
+# Guard cứng chống regression tái xuất hiện time.sleep(300) chặn cả loop (bug bị bắt
+# ở review vòng 1 của spec) — patch time.sleep nghĩa là NẾU code có gọi lại, test này
+# fail NGAY LẬP TỨC thay vì đứng im 5 phút rồi mới lộ ra.
+assert sleep_mock.call_count == 0, \
+    f"process_symbol() KHÔNG được tự sleep — phát hiện {sleep_mock.call_count} lần gọi time.sleep()"
+print("OK: throttle daily-loss-warn hoạt động đúng (2 lần warn, không phải 3) và không tự sleep")
 ```
 
 Run: `python scratch_verify_throttle.py`
-Expected: in ra `OK: throttle daily-loss-warn hoạt động đúng (2 lần warn, không phải 3)`,
-không traceback/AssertionError.
+Expected: in ra `OK: throttle daily-loss-warn hoạt động đúng (2 lần warn, không phải 3) và không tự sleep`,
+không traceback/AssertionError. Nếu ai đó lỡ tái đưa `time.sleep(300)` vào nhánh
+`daily_loss_exceeded`, script này FAIL NGAY (AssertionError trên `sleep_mock.call_count`)
+thay vì chỉ đứng treo 5 phút rồi mới bị nghi ngờ.
 
 Sau khi PASS, xoá file: `rm scratch_verify_throttle.py` (không commit file này).
 
@@ -405,6 +412,18 @@ def main(symbol_names: list[str]) -> None:
 Ghi chú: `client.shutdown()` gọi `mt5.shutdown()` — kết nối là global nên gọi 1
 lần là đủ về kỹ thuật, nhưng gọi lặp lại cho từng runner an toàn (idempotent,
 `mt5_client.py:52-54`) và giữ code đơn giản.
+
+**Cảnh báo trạng thái trung gian**: sau commit của task này, `main()` đã đổi
+chữ ký thành `main(symbol_names: list[str])`, nhưng khối `if __name__ ==
+"__main__":` (Task 5, chưa chạy) vẫn còn gọi `main(get_config(args.symbol))` —
+tức truyền 1 `TradingConfig` object thay vì `list[str]`. `python -c "import
+main"` ở Step 2 dưới đây PASS bình thường (import không chạy khối
+`__main__`), nhưng `python main.py --symbol XAUUSDm` sẽ CRASH ở commit này
+(`build_runner` gọi `name.lower()` trên 1 object không phải string). Đây là
+trạng thái trung gian CHẤP NHẬN ĐƯỢC trong 1 phiên làm việc liên tục — Task 5
+chạy ngay sau đó khớp nối lại CLI — nhưng nếu dừng giữa chừng ở đúng commit
+này (vd. `git bisect`, review theo từng commit riêng lẻ), `main.py` chưa chạy
+được qua CLI. Không rollback/deploy dừng ở commit của Task 4 một mình.
 
 - [ ] **Step 2: Kiểm tra cú pháp**
 
@@ -459,7 +478,7 @@ if __name__ == "__main__":
 Lưu ý: `get_config()` không còn gọi trực tiếp ở `__main__` nữa — mỗi tên trong
 `names` được resolve thành config RIÊNG bên trong `build_runner()` (Task 2),
 vì mỗi symbol cần 1 lần gọi `get_config` độc lập (trả về bản copy — xem
-`config.py:234-242`).
+`config.py:264-272`).
 
 - [ ] **Step 2: Kiểm tra cú pháp + `--help`**
 
