@@ -14,8 +14,9 @@ skip the H1/H2 split even if the full-period result looks good.
 
 ## Step 1: Baseline, full period
 
-Confirm the symbol with the user if not already stated: `XAUUSDm`/`gold` or
-`EURUSDm`/`eurusd`. Run:
+Confirm the symbol with the user if not already stated — see `config.py`'s
+`CONFIGS`/`_ALIASES` for the current registry (as of this writing:
+`XAUUSDm`/`gold`, `EURUSDm`/`eurusd`, `GBPUSDm`/`gbpusd`). Run:
 
 ```bash
 python backtest.py --from-mt5 --symbol <sym> --years 2

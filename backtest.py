@@ -40,6 +40,8 @@ SYMBOL_INFO = {
     "XAUUSDm": SYMBOL_INFO_DEFAULT,
     "EURUSDm": {"contract_size": 100_000.0, "volume_min": 0.01, "volume_step": 0.01,
                 "volume_max": 200.0, "point": 1e-05, "digits": 5},
+    "GBPUSDm": {"contract_size": 100_000.0, "volume_min": 0.01, "volume_step": 0.01,
+                "volume_max": 200.0, "point": 1e-05, "digits": 5},
 }
 
 

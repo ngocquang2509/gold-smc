@@ -219,15 +219,45 @@ EURUSD = TradingConfig(
 )
 
 
+# ═════════════════════════════════════════════════════════
+#  CONFIG GBPUSD (GBPUSDm) — forex 5-số, cùng scale giá EURUSD
+#  (point 1e-05, contract 100k, tick_value $1/point/lot — đo trên MT5
+#  Exness ngày 2026-07-30). CHƯA TUNE — mọi tham số chiến lược giữ
+#  mặc định TradingConfig, chỉ override scale giá + chi phí + magic riêng.
+#  Tune sau bằng backtest-tuning.
+# ═════════════════════════════════════════════════════════
+GBPUSD = TradingConfig(
+    symbol="GBPUSDm",
+    magic_number=20260725,          # magic RIÊNG — không đụng vàng/EURUSD
+    news_currencies=("USD", "GBP"),
+    # scale giá forex 5-số (1 pip = 0.0001), giống EURUSD (cùng point 1e-05)
+    price_digits=5,
+    eq_tolerance=0.0005,            # gộp equal H/L trong 5 pip
+    fvg_min_size_points=0.0002,     # FVG tối thiểu 2 pip
+    sl_buffer_points=0.0003,        # đệm SL 3 pip ngoài OB/swing
+    min_sl_distance_points=0.0010,  # sàn khoảng SL 10 pip (chống lot phình)
+    # chi phí THẬT đo từ MT5 Exness (Standard "m") ngày 2026-07-30:
+    # median spread 10 points ổn định (12h + 3 ngày, giờ 08–17 server) = 1 pip.
+    spread_points=0.00010,          # 10 points × point 1e-05
+    commission_per_lot=0.0,         # Standard = miễn commission
+    swap_long_per_lot=-1.5,         # swap_long thật (POINTS -1.5 × $1.00/point, tick_value=1.0)
+    swap_short_per_lot=-1.1,        # swap_short thật (POINTS -1.1 × $1.00/point)
+    # sessions: giữ mặc định 08:00-17:00 giờ server (London→NY overlap, cùng
+    # cấu trúc phiên thanh khoản mạnh của vàng) — CHƯA sweep riêng cho GBPUSD.
+)
+
+
 # ── Registry: chọn config theo symbol ────────────────────
 CONFIGS = {
     "XAUUSDm": XAUUSD,
     "EURUSDm": EURUSD,
+    "GBPUSDm": GBPUSD,
 }
 # Alias thân thiện cho dòng lệnh
 _ALIASES = {
     "gold": "XAUUSDm", "xau": "XAUUSDm", "xauusd": "XAUUSDm", "vang": "XAUUSDm",
     "eur": "EURUSDm", "eurusd": "EURUSDm",
+    "gbp": "GBPUSDm", "gbpusd": "GBPUSDm",
 }
 
 
