@@ -359,7 +359,17 @@ def main(symbol_names: list[str]) -> None:
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--symbol", default="XAUUSDm",
-                   help="Symbol/config để chạy live: XAUUSDm | EURUSDm (alias: gold/eurusd).")
+    p.add_argument("--symbol", default=None,
+                   help="[Tương thích ngược] 1 symbol duy nhất: XAUUSDm | EURUSDm | "
+                        "GBPUSDm (alias: gold/eurusd/gbpusd).")
+    p.add_argument("--symbols", default=None,
+                   help="Danh sách symbol, phân tách bằng dấu phẩy — vd EURUSDm,GBPUSDm. "
+                        "Chấp nhận alias. Ưu tiên hơn --symbol nếu truyền cả hai.")
     args = p.parse_args()
-    main(get_config(args.symbol))
+    if args.symbols:
+        names = [s.strip() for s in args.symbols.split(",") if s.strip()]
+    elif args.symbol:
+        names = [args.symbol]
+    else:
+        names = ["XAUUSDm"]   # mặc định giữ nguyên hành vi cũ
+    main(names)
