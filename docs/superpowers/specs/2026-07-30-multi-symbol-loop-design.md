@@ -91,7 +91,11 @@ class SymbolRunner:
     trades_today: int = 0
     trade_day: date | None = None
     had_open: bool = False
+    daily_loss_warn_until: datetime | None = None   # xem mục 4, nhánh daily-loss-exceeded
 ```
+
+Cần thêm `date` vào import hiện có ở `main.py:11`
+(`from datetime import datetime, timedelta` → thêm `date`).
 
 ### 3. Khởi tạo (thay `main(cfg)` bằng `main(symbol_names)`)
 
@@ -148,9 +152,8 @@ tự sleep (sleep chuyển ra ngoài vòng `for`), nên các điểm đó đổi
 không chờ).
 
 Các nhánh cần đổi (đối chiếu theo dòng hiện tại):
-- `guard.daily_loss_exceeded` (`main.py:216-219`): log cảnh báo, `return` (bỏ
-  qua toàn bộ phần tìm tín hiệu tick này cho symbol này — KHÔNG `time.sleep(300)`
-  chặn cả bot, vì symbol khác vẫn cần chạy đúng nhịp).
+- `guard.daily_loss_exceeded` (`main.py:216-219`): **thay đổi hành vi có chủ đích,
+  không phải refactor thuần túy — xem cảnh báo riêng ngay dưới đây.**
 - `not in_session` (`221-223`), `pre_weekend_guard` (`224-226`),
   `in_news_blackout` (`227-230`): `return`.
 - `current_bar == last_ltf_bar` (`236-238`): `return`.
@@ -165,6 +168,41 @@ Các nhánh cần đổi (đối chiếu theo dòng hiện tại):
 `manage_open_positions` và `reconcile_journal` (`211-214`) vẫn chạy đầu mỗi lần
 gọi `process_symbol`, giữ đúng hành vi cũ: quản lý lệnh mở/đối chiếu chạy mỗi
 tick kể cả ngoài session, không bị early-return của session gate chặn.
+
+#### Cảnh báo riêng: nhánh `daily_loss_exceeded` — THAY ĐỔI HÀNH VI có chủ đích
+
+Code cũ (`main.py:216-219`) khi chạm giới hạn lỗ ngày làm `time.sleep(300); continue`
+— việc này **chặn toàn bộ vòng lặp 5 phút**, nghĩa là `manage_open_positions`/
+`reconcile_journal` (nằm phía TRÊN check này, dòng 212/214) cũng KHÔNG chạy lại
+cho tới khi hết 5 phút, dù docstring của `manage_open_positions`
+(`main.py:52-53`: "chạy mỗi vòng lặp (kể cả ngoài session)") ngụ ý ý định ban đầu
+là quản lý lệnh phải luôn chạy đều đặn. Đây nhiều khả năng là hệ quả phụ ngoài ý
+muốn của cấu trúc 1-symbol-1-loop cũ, không phải hành vi an toàn cố ý — và trong
+kiến trúc multi-symbol dùng chung 1 vòng lặp, việc 1 symbol chạm daily-loss-limit
+mà làm nghẽn `sleep(300)` sẽ CHẶN LUÔN các symbol khác — không chấp nhận được.
+
+Thiết kế mới, **cố ý đổi hành vi** (không phải giữ nguyên như phần còn lại của
+mục này):
+- KHÔNG `time.sleep(300)` chặn bất cứ thứ gì. `manage_open_positions`/
+  `reconcile_journal` luôn chạy đều mỗi tick (đúng `poll_seconds`, ví dụ 30s) cho
+  symbol đang bị daily-loss-lock, kể cả trong lúc bị khoá — đây là cải thiện so
+  với code cũ, không phải mất tính năng.
+- Việc DUY NHẤT cần giữ nhịp cũ (~300s/lần) là **tần suất log cảnh báo** "chạm
+  giới hạn lỗ ngày", để không spam log mỗi 30s. Dùng field
+  `daily_loss_warn_until: datetime | None` trong `SymbolRunner`:
+  ```python
+  if guard.daily_loss_exceeded(balance):
+      if runner.daily_loss_warn_until is None or now >= runner.daily_loss_warn_until:
+          log.warning(f"⛔ [{runner.cfg.symbol}] Chạm giới hạn lỗ ngày — tạm dừng tìm tín hiệu đến ngày mai.")
+          runner.daily_loss_warn_until = now + timedelta(seconds=300)
+      return   # vẫn bỏ qua phần tìm tín hiệu mới, nhưng KHÔNG sleep — sang symbol kế tiếp ngay
+  ```
+- Tác động tới kiểm chứng (mục "Kiểm chứng" bên dưới): vì đây là thay đổi hành vi
+  thật (không chỉ tổ chức lại code), test hồi quy `--symbol XAUUSDm` sau refactor
+  cần lưu ý riêng: khi daily-loss bị chạm, log cảnh báo vẫn xuất hiện ~mỗi 300s
+  (giống cũ) nhưng `manage_open_positions`/`reconcile_journal` giờ chạy mỗi
+  `poll_seconds` thay vì bị đứng 5 phút — đây LÀ khác biệt observable có chủ đích,
+  không phải bug của bản refactor.
 
 ### 5. Các hàm khác — không đổi chữ ký
 
@@ -195,17 +233,26 @@ tham số tường minh — không đụng vào, chỉ gọi qua `runner.cfg`/`r
 
 ## Kiểm chứng
 
-Đây là thay đổi kiến trúc thuần (luồng điều khiển/tổ chức code), **không đổi
-logic tín hiệu hay quản lý lệnh** — `strategy.analyze`, `risk.py`, SMC modules
-đều không đụng tới. Vì vậy không cần chạy lại `backtest-tuning` (không có tham
-số chiến lược nào thay đổi); việc kiểm chứng tập trung vào:
+Đây chủ yếu là thay đổi kiến trúc (luồng điều khiển/tổ chức code) — **không đổi
+logic tín hiệu hay tính toán rủi ro**: `strategy.analyze`, `risk.py`
+(`calc_lot_size`, `validate_rr`, ngưỡng `RiskGuard`), SMC modules đều không đụng
+tới. Ngoại lệ DUY NHẤT là hành vi throttle của nhánh `daily_loss_exceeded` (mục 4)
+— cố ý đổi từ "chặn cả vòng lặp 5 phút" sang "chỉ throttle log cảnh báo, vẫn quản
+lý lệnh mỗi tick". Vì không có tham số chiến lược nào thay đổi (`min_rr`, `tp_rr`,
+sessions, risk_per_trade_pct...), không cần chạy lại `backtest-tuning`; việc kiểm
+chứng tập trung vào:
 
 - Chạy `--symbol XAUUSDm` (1 symbol, cú pháp cũ) sau khi refactor → xác nhận
-  hành vi log/journal/order giống hệt bản trước refactor (regression check thủ
-  công, so log output).
+  hành vi log/journal/order giống hệt bản trước refactor NGOẠI TRỪ nhánh
+  daily-loss (regression check thủ công, so log output).
 - Chạy `--symbols EURUSDm,GBPUSDm` ở `dry_run=True` (mặc định) một thời gian
   ngắn → xác nhận cả 2 symbol cùng nhận diện tín hiệu, cùng ghi journal riêng,
   cooldown/trần lệnh/ngày không lẫn giữa 2 symbol.
+- Riêng nhánh `daily_loss_exceeded`: giả lập/chờ tới lúc chạm giới hạn lỗ ngày
+  (hoặc hạ tạm `max_daily_loss_pct` để test), xác nhận (a) log cảnh báo chỉ xuất
+  hiện ~mỗi 300s chứ không mỗi tick, (b) `manage_open_positions`/
+  `reconcile_journal` cho symbol đó vẫn chạy đều mỗi `poll_seconds` thay vì đứng
+  5 phút, (c) symbol khác trong cùng `--symbols` không bị ảnh hưởng.
 
 ## Ngoài phạm vi (out of scope)
 
