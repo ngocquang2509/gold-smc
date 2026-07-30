@@ -1,16 +1,18 @@
 """
-Vòng lặp giao dịch live/demo.
-Chạy vàng:   python main.py --symbol XAUUSDm   (mặc định)
-Chạy EURUSD: python main.py --symbol EURUSDm
-Mỗi symbol dùng config RIÊNG trong config.py (magic_number riêng → chạy song song được).
+Vòng lặp giao dịch live/demo — hỗ trợ chạy 1 HOẶC NHIỀU symbol trong CÙNG 1 tiến trình.
+Chạy 1 symbol (tương thích ngược): python main.py --symbol XAUUSDm   (mặc định)
+Chạy nhiều symbol cùng lúc:        python main.py --symbols EURUSDm,GBPUSDm
+Mỗi symbol dùng config RIÊNG trong config.py (magic_number riêng), risk/journal
+độc lập theo symbol — chỉ dùng CHUNG 1 kết nối MT5 (global) và 1 vòng lặp tuần tự.
 Mặc định dry_run trong config.py — kiểm tra trước khi chạy tiền thật.
 """
 import time
 import logging
 import argparse
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import datetime, date, timedelta
 import pandas as pd
-from config import get_config
+from config import get_config, TradingConfig
 from mt5_client import MT5Client
 from strategy import analyze
 from risk import RiskGuard, PositionState, manage_tick, manage_step
@@ -27,6 +29,26 @@ log = logging.getLogger("main")
 
 # Phút mỗi nến theo timeframe — dùng tính hạn (expiry) cho lệnh LIMIT (#4).
 TF_MINUTES = {"M1": 1, "M5": 5, "M15": 15, "M30": 30, "H1": 60, "H4": 240, "D1": 1440}
+
+
+@dataclass
+class SymbolRunner:
+    """Trạng thái độc lập cho 1 symbol khi nhiều symbol chạy chung 1 vòng lặp."""
+    cfg: TradingConfig
+    client: MT5Client
+    journal: TradeJournal
+    guard: RiskGuard
+    notifier: TelegramNotifier
+    symbol_info: dict
+    # Trạng thái chống re-entry / cooldown (khớp backtest.py để live == backtest)
+    last_ltf_bar: pd.Timestamp | None = None
+    last_sweep_level: float | None = None
+    bars_since_exit: int = 10 ** 9
+    trades_today: int = 0
+    trade_day: date | None = None
+    had_open: bool = False
+    # Throttle log cảnh báo daily-loss (KHÔNG dùng để sleep/chặn — xem process_symbol)
+    daily_loss_warn_until: datetime | None = None
 
 
 def in_session(now: datetime, cfg) -> bool:
