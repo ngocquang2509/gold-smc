@@ -223,6 +223,118 @@ def build_runner(name: str) -> SymbolRunner | None:
                          notifier=notifier, symbol_info=symbol_info)
 
 
+def process_symbol(runner: SymbolRunner) -> None:
+    """Một lượt xử lý cho 1 symbol: quản lý lệnh mở → các cổng chặn (daily-loss/
+    session/weekend/tin tức) → tìm tín hiệu mới nếu có nến LTF mới đóng. KHÔNG tự
+    sleep — vòng lặp ngoài (main()) sleep 1 lần sau khi xử lý xong MỌI symbol
+    trong tick, để 1 symbol không làm nghẽn nhịp của symbol khác."""
+    cfg, client, journal = runner.cfg, runner.client, runner.journal
+    guard, notifier, symbol_info = runner.guard, runner.notifier, runner.symbol_info
+
+    now = client.server_time()   # giờ SERVER, không dùng datetime.now()
+    balance = client.get_balance()
+    guard.update_day(now.date(), balance)
+
+    # Quản lý lệnh mở + đối chiếu nhật ký chạy MỖI TICK, kể cả ngoài session hay
+    # đang bị daily-loss lock (xem ghi chú THAY ĐỔI HÀNH VI ngay dưới).
+    manage_open_positions(client, cfg, journal, symbol_info)
+    reconcile_journal(client, journal, notifier)
+
+    if guard.daily_loss_exceeded(balance):
+        # THAY ĐỔI HÀNH VI có chủ đích so với bản 1-symbol-1-process cũ (vốn
+        # `time.sleep(300); continue` chặn CẢ manage_open_positions/reconcile_journal
+        # trong 5 phút — main.py:216-219 bản gốc). Trong vòng lặp multi-symbol dùng
+        # chung, sleep ở đây sẽ chặn LUÔN các symbol khác nên KHÔNG được sleep.
+        # Quản lý lệnh vẫn chạy đều mỗi tick (đã chạy ở trên); chỉ throttle LOG
+        # cảnh báo còn ~300s/lần để không spam.
+        if runner.daily_loss_warn_until is None or now >= runner.daily_loss_warn_until:
+            log.warning(f"⛔ [{cfg.symbol}] Chạm giới hạn lỗ ngày — tạm dừng tìm tín hiệu đến ngày mai.")
+            runner.daily_loss_warn_until = now + timedelta(seconds=300)
+        return
+
+    if not in_session(now, cfg):
+        return
+    if pre_weekend_guard(now, cfg):
+        return
+    # #7 — Cấm vào lệnh quanh tin mạnh (news_filter_enabled=False mặc định).
+    if in_news_blackout(now, cfg):
+        return
+
+    ltf_df = client.get_rates(cfg.ltf, cfg.ltf_bars)
+    current_bar = ltf_df.index[-1]
+
+    # Chỉ phân tích khi có nến LTF mới đóng (dùng nến đã đóng, bỏ nến đang chạy)
+    if current_bar == runner.last_ltf_bar:
+        return
+    runner.last_ltf_bar = current_bar
+
+    # Xử lý kết quả lệnh paper (dry_run) trên các nến vừa đóng
+    resolve_paper_trades(journal, ltf_df, cfg, symbol_info)
+
+    # ── Cập nhật trạng thái theo nến mới (cooldown, đếm lệnh/ngày) ──
+    n_open = len(client.open_positions())
+    if runner.had_open and n_open == 0:      # lệnh vừa đóng → bắt đầu cooldown
+        runner.bars_since_exit = 0
+    runner.had_open = n_open > 0
+    runner.bars_since_exit += 1
+    if now.date() != runner.trade_day:
+        runner.trade_day = now.date()
+        runner.trades_today = 0
+
+    # #4: đang có lệnh mở HOẶC lệnh LIMIT chờ khớp → không đặt thêm.
+    n_pending = len(client.pending_orders())
+    if n_open >= cfg.max_open_positions or n_pending > 0:
+        return
+    # Cooldown sau lệnh + trần lệnh/ngày (khớp backtest.py)
+    if runner.bars_since_exit < cfg.cooldown_bars or runner.trades_today >= cfg.max_trades_per_day:
+        return
+
+    htf_df = client.get_rates(cfg.htf, cfg.htf_bars)
+    # Bỏ nến đang chạy để tránh repaint
+    plan = analyze(htf_df.iloc[:-1], ltf_df.iloc[:-1], cfg, balance, symbol_info)
+
+    if not plan:
+        return
+
+    # Chống re-entry: mỗi cú sweep chỉ giao dịch 1 lần
+    if cfg.one_trade_per_sweep and plan.sweep_level is not None \
+            and plan.sweep_level == runner.last_sweep_level:
+        log.info(f"⏭️  [{cfg.symbol}] Bỏ qua — đã giao dịch sweep {plan.sweep_level} rồi.")
+        return
+
+    open_risk_pct = n_open * cfg.risk_per_trade_pct
+    if guard.heat_exceeded(open_risk_pct, cfg.risk_per_trade_pct):
+        log.warning(f"⛔ [{cfg.symbol}] Vượt portfolio heat cap — bỏ qua tín hiệu.")
+        return
+
+    log.info(f"🎯 [{cfg.symbol}] TÍN HIỆU: {plan.direction.upper()} @ {plan.entry} | "
+             f"SL {plan.sl} | TP {plan.tp} | lot {plan.lot} | "
+             f"R:R {plan.rr} | risk ${plan.risk_amount} | {plan.reason}")
+    if not cfg.dry_run:
+        notifier.notify_signal(cfg.symbol, plan)
+    if cfg.dry_run:
+        log.info(f"[{cfg.symbol}] (dry_run — không đặt lệnh thật)")
+        journal.record_open(f"paper-{int(now.timestamp())}", plan.direction,
+                            plan.entry, plan.sl, plan.tp, plan.lot, plan.rr,
+                            plan.risk_amount, plan.reason, mode="paper", created=now)
+    else:
+        # #4: đặt LIMIT nghỉ tại biên vùng, broker tự hết hạn sau
+        # entry_expiry_bars nến nếu giá không hồi về khớp.
+        expiry = now + timedelta(minutes=TF_MINUTES.get(cfg.ltf, 15)
+                                 * cfg.entry_expiry_bars)
+        ticket = client.pending_order(plan.direction, plan.lot, plan.entry,
+                                      plan.sl, plan.tp, expiry,
+                                      comment=f"SMC RR{plan.rr}")
+        if ticket:
+            # Ticket lệnh chờ == ticket position khi khớp → journal khớp luôn.
+            journal.record_open(ticket, plan.direction, plan.entry, plan.sl,
+                                plan.tp, plan.lot, plan.rr, plan.risk_amount,
+                                plan.reason, mode="live", created=now)
+            notifier.notify_opened(cfg.symbol, plan)
+    runner.last_sweep_level = plan.sweep_level
+    runner.trades_today += 1
+
+
 def main(cfg):
     client = MT5Client(cfg.symbol, cfg.magic_number, cfg.deviation)
     if not client.connect():
