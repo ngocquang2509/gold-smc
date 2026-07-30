@@ -9,16 +9,23 @@ Gold (XAUUSD) trading bot for MetaTrader 5 implementing Smart Money Concepts (SM
 ## Commands
 
 Each symbol has its own independent config in `config.py`, selected with `--symbol`
-(`XAUUSDm`/`EURUSDm`, aliases `gold`/`eurusd`). Default is `XAUUSDm`. Tuning one symbol
-never touches the other.
+(`XAUUSDm`/`EURUSDm`/`GBPUSDm`, aliases `gold`/`eurusd`/`gbpusd`). Default is
+`XAUUSDm`. Tuning one symbol never touches the other.
+
+`main.py` (live/demo loop) can also run **multiple symbols in one process** via
+`--symbols a,b,c` (comma-separated, aliases accepted) — a single sequential
+single-thread loop processes each symbol's own state (risk guard, journal,
+cooldown) independently every poll tick. `--symbol` (singular) still works for
+one symbol, unchanged. `backtest.py` remains single-symbol only (`--symbol`) —
+multi-symbol is a live/demo-loop-only capability.
 
 ```bash
 # Install (no requirements file — install manually)
 pip install MetaTrader5 pandas numpy certifi
 
 # Live/demo loop (defaults to dry_run — logs signals, places no orders)
-python main.py --symbol XAUUSDm       # gold
-python main.py --symbol EURUSDm       # EURUSD
+python main.py --symbol XAUUSDm                  # 1 symbol (gold)
+python main.py --symbols EURUSDm,GBPUSDm         # nhiều symbol, 1 process
 
 # Backtest from MT5 (Windows only) — 2 years
 python backtest.py --from-mt5 --symbol XAUUSDm --years 2 --balance 10000
