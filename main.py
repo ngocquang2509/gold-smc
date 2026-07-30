@@ -201,6 +201,28 @@ def resolve_paper_trades(journal: TradeJournal, ltf_df: pd.DataFrame, cfg, symbo
                                  closed=exit_ts.to_pydatetime())
 
 
+def build_runner(name: str) -> SymbolRunner | None:
+    """Kết nối MT5 + khởi tạo toàn bộ state cho 1 symbol. Trả về None (KHÔNG raise)
+    nếu riêng symbol này không chọn được trên broker — để các symbol khác trong
+    cùng lệnh vẫn chạy được (quyết định đã chốt trong spec)."""
+    cfg = get_config(name)
+    client = MT5Client(cfg.symbol, cfg.magic_number, cfg.deviation)
+    if not client.connect():
+        log.error(f"⛔ Bỏ qua {cfg.symbol} — không kết nối/chọn được trên broker.")
+        return None
+    symbol_info = client.get_symbol_info()
+    guard = RiskGuard(cfg.max_daily_loss_pct, cfg.portfolio_heat_pct)
+    journal = TradeJournal(cfg.symbol)
+    notifier = TelegramNotifier.from_config(cfg)
+    log.info(f"🚀 {cfg.symbol} sẵn sàng | HTF {cfg.htf} → LTF {cfg.ltf} | "
+             f"risk {cfg.risk_per_trade_pct}%/lệnh | dry_run={cfg.dry_run}")
+    log.info(f"📁 [{cfg.symbol}] Nhật ký: {journal.path.resolve()} | Telegram: "
+             f"{'bật' if notifier.enabled else 'tắt'}")
+    log_open_positions(client, journal)
+    return SymbolRunner(cfg=cfg, client=client, journal=journal, guard=guard,
+                         notifier=notifier, symbol_info=symbol_info)
+
+
 def main(cfg):
     client = MT5Client(cfg.symbol, cfg.magic_number, cfg.deviation)
     if not client.connect():
