@@ -96,6 +96,14 @@ lẫn nên bắt buộc dùng `.iloc` tường minh để tránh implementer "d�
   từ điểm kiệt sức).
 - **Bearish** (đối xứng): `s.iloc[extreme_pos] >= cfg.rsi_overbought` **và**
   `s.iloc[confirm_index] < s.iloc[extreme_pos]`.
+- **Kiểu trả về:** các phép so sánh trên `pd.Series.iloc[...]` cho ra
+  `numpy.bool_`, không phải `bool` của Python — khác nhau dưới `is True`/
+  `is False` (identity check), dù in ra màn hình trông giống hệt `True`/
+  `False`. Hàm khai báo trả về `bool` nên PHẢI bọc kết quả cuối bằng
+  `bool(...)` tường minh trước khi return, để tránh gây khó hiểu cho bất kỳ
+  test nào dùng `is True`/`is False` (kể cả trong chính plan triển khai của
+  spec này) hoặc bất kỳ code gọi nào ở nơi khác dựa vào identity thay vì
+  equality.
 
 **Bug đã phát hiện và sửa trong bản thiết kế này:** thiết kế ban đầu so sánh
 `s[confirm_index]` với `s[sweep_index]` trực tiếp. Khi không có `last_sweep`,
