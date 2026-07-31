@@ -44,41 +44,73 @@ def rsi(series: pd.Series, period: int) -> pd.Series:
     """RSI chuẩn (Wilder smoothing) trên chuỗi giá đóng cửa."""
 
 def rsi_confirms(ltf_df: pd.DataFrame, cfg: TradingConfig, trend: str,
-                  sweep_index: int, confirm_index: int) -> bool:
-    """True nếu momentum đã kiệt sức tại sweep rồi đảo chiều tới lúc confirm."""
+                  confirm_index: int, sweep_index: int | None) -> bool:
+    """True nếu momentum đã kiệt sức trong cửa sổ trước confirm rồi đảo chiều.
+
+    sweep_index: vị trí (positional) của sweep xác nhận trend đảo chiều, hoặc
+    None nếu không có sweep (require_sweep=False) — khi đó dùng cửa sổ lùi lại
+    cfg.rsi_period nến làm mốc bắt đầu thay vì so sweep_index == confirm_index.
+    """
 ```
 
 ### Logic `rsi_confirms`
 
 Không kiểm tra "RSI hiện tại > 50" chung chung — bám sát đúng câu chuyện cấu
-trúc của sweep+CHoCH: momentum có thực sự kiệt sức tại điểm sweep rồi quay đầu
-tới lúc xác nhận không?
+trúc của sweep+CHoCH: momentum có thực sự kiệt sức trong khoảng
+`[start_index, confirm_index]` rồi quay đầu tới lúc xác nhận không?
 
-- Tính `s = rsi(ltf_df["close"], cfg.rsi_period)`.
-- Nếu không đủ nến lịch sử trước `sweep_index` để tính RSI (cần tối thiểu
-  `cfg.rsi_period + 1` nến), trả về `False` (fail-safe — không đoán mò trên
-  NaN, bỏ qua lệnh thay vì cho qua).
-- **Bullish** (cần sellside sweep trước đó):
-  `min(s[sweep_index : confirm_index + 1]) <= cfg.rsi_oversold`
-  **và** `s[confirm_index] > s[sweep_index]`.
-- **Bearish** (đối xứng, buyside sweep):
-  `max(s[sweep_index : confirm_index + 1]) >= cfg.rsi_overbought`
-  **và** `s[confirm_index] < s[sweep_index]`.
-- Nếu không có `last_sweep` (trường hợp `require_sweep=False`), dùng
-  `confirm_index` làm cả hai đầu mút của khoảng kiểm tra.
+**Quan trọng — mọi chỉ mục (`sweep_index`, `confirm_index`, `start_index`) là
+vị trí (positional, 0-based), KHÔNG phải label của `DatetimeIndex`** (
+`ltf_df` có index là thời gian — xem `mt5_client.get_rates`). `rsi()` trả về
+`pd.Series` cùng chiều dài với `ltf_df`, và mọi truy cập bên trong
+`rsi_confirms` phải dùng `.iloc[...]`, không dùng `.loc[...]` hay slice trực
+tiếp trên Series theo label — slice số nguyên trên Series pandas *tình cờ*
+hoạt động theo vị trí bất kể dtype của index, nhưng đây là hành vi dễ gây nhầm
+lẫn nên bắt buộc dùng `.iloc` tường minh để tránh implementer "dọn code" bằng
+`.loc` và âm thầm sai.
+
+- `start_index = last_sweep.index if last_sweep else max(0, confirm_index - cfg.rsi_period)`.
+  Khi không có sweep (`require_sweep=False`), dùng một cửa sổ lùi lại
+  `cfg.rsi_period` nến làm mốc bắt đầu — đảm bảo cửa sổ luôn có độ dài > 1
+  (tránh trường hợp suy biến `start_index == confirm_index`, xem bug đã sửa
+  bên dưới).
+- Tính `s = rsi(ltf_df["close"], cfg.rsi_period)` (dùng `.iloc` khi truy cập).
+- Nếu `start_index < cfg.rsi_period` (không đủ nến lịch sử để RSI tại
+  `start_index` đã "ấm" — `rsi()` trả NaN cho `cfg.rsi_period` phần tử đầu),
+  trả về `False` (fail-safe — không đoán mò trên NaN, bỏ qua lệnh thay vì cho
+  qua).
+- Tìm điểm cực trị trong cửa sổ: `extreme_pos = s.iloc[start_index:confirm_index+1].idxmin()` (bullish)
+  hoặc `.idxmax()` (bearish) — vị trí RSI kiệt sức nhất trong cửa sổ, KHÔNG
+  nhất thiết là `start_index` (sweep có thể không trùng đúng đáy RSI).
+- **Bullish**: `s.iloc[extreme_pos] <= cfg.rsi_oversold` **và**
+  `s.iloc[confirm_index] > s.iloc[extreme_pos]` (momentum đã quay đầu lên kể
+  từ điểm kiệt sức).
+- **Bearish** (đối xứng): `s.iloc[extreme_pos] >= cfg.rsi_overbought` **và**
+  `s.iloc[confirm_index] < s.iloc[extreme_pos]`.
+
+**Bug đã phát hiện và sửa trong bản thiết kế này:** thiết kế ban đầu so sánh
+`s[confirm_index]` với `s[sweep_index]` trực tiếp. Khi không có `last_sweep`,
+bản nháp trước truyền `sweep_idx = confirm.index` từ `strategy.py`, khiến
+`sweep_index == confirm_index` → so sánh một giá trị với chính nó → luôn
+`False` → RSI filter reject **mọi** lệnh khi `require_sweep=False`, mâu thuẫn
+ngầm với combo `rsi_filter_enabled=True` + `require_sweep=False`. Thiết kế mới
+(dùng cửa sổ lùi lại `rsi_period` nến + tìm cực trị bằng `idxmin`/`idxmax`
+thay vì so sánh trực tiếp với `start_index`) loại bỏ hoàn toàn trường hợp suy
+biến này, vì cửa sổ luôn dài hơn 1 nến bất kể có sweep hay không.
 
 ### Tích hợp vào `strategy.py`
 
-Thêm bước **4c** ngay sau bước 4 (xác nhận CHoCH/BOS) và trước bước 4b (trần
-tuổi setup) / bước 5 (tìm vùng entry OB/FVG) — cùng nhóm các filter tùy chọn
-như bước 5c (`require_discount_premium`, #6):
+Thêm bước **4a** ngay sau bước 4 (xác nhận CHoCH/BOS) và trước bước 4b (trần
+tuổi setup hiện có) / bước 5 (tìm vùng entry OB/FVG) — cùng nhóm các filter
+tùy chọn như bước 5c (`require_discount_premium`, #6). Thứ tự các bước sau khi
+thêm: 4 → **4a (mới)** → 4b → 5 → 5b → 5c → 6.
 
 ```python
-# ── 4c. RSI momentum confluence (tùy chọn) ──────────
+# ── 4a. RSI momentum confluence (tùy chọn) ──────────
 if cfg.rsi_filter_enabled:
-    sweep_idx = last_sweep.index if last_sweep else confirm.index
-    if not rsi_confirms(ltf_df, cfg, trend, sweep_idx, confirm.index):
-        log.debug("RSI không xác nhận momentum kiệt sức tại sweep — bỏ.")
+    sweep_idx = last_sweep.index if last_sweep else None
+    if not rsi_confirms(ltf_df, cfg, trend, confirm.index, sweep_idx):
+        log.debug("RSI không xác nhận momentum kiệt sức trước điểm confirm — bỏ.")
         return None
 ```
 
