@@ -39,6 +39,29 @@ There is no test suite, linter, or build step. Backtesting **is** the validation
 
 Backtest models **trading costs** (spread round-trip, overnight swap with Wednesday triple-swap, optional commission) per-symbol from `config.py` (`spread_points`, `commission_per_lot`, `swap_long/short_per_lot`); costs are charged per fill (partials included, pro-rata by lot) so PF/winrate/CAGR are net-of-cost. Add `--no-costs` to see gross. Defaults are conservative Standard-account estimates — tune to your broker.
 
+### Scalping M5 stream (independent, separate process)
+
+A fully independent scalping strategy — single-timeframe M5, EMA trend-pullback + RSI +
+ATR SL/TP — lives in `scalp_config.py`/`scalp_strategy.py`/`scalp_backtest.py`/
+`scalp_main.py`. It shares NOTHING with the SMC bot above (own magic numbers, own
+journal files `scalp_trades_<symbol>.csv`, own risk %). See
+`docs/superpowers/specs/2026-07-31-scalp-m5-design.md` for the full design.
+
+```bash
+# Backtest
+python scalp_backtest.py --from-mt5 --symbol XAUUSDm --years 2 --balance 10000
+
+# Live/demo (dry_run=True by default in scalp_config.py)
+python scalp_main.py --symbol XAUUSDm
+python scalp_main.py --symbols EURUSDm,GBPUSDm
+```
+
+Can run alongside `main.py` in a separate process on the same MT5 terminal — see the
+spec's "Rủi ro cần xác minh" section before relying on this in live trading.
+Untuned baseline (measured 2026-07-31, see `scalp_config.py` header) is **net-losing on
+all 3 symbols** (PF 0.69–0.84) — deep parameter tuning is a separate follow-up, not yet
+done.
+
 ## Platform constraints
 
 - The `MetaTrader5` Python library runs **only on Windows** with an installed, logged-in MT5 terminal ("Algo Trading" enabled). `mt5_client.py` guards the import (`MT5_AVAILABLE`) so the SMC/strategy modules can still be imported and backtested from CSV on any OS.
