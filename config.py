@@ -88,6 +88,23 @@ class TradingConfig:
     #   lệnh SL sát qua cả cuối tuần không ai quản lý được. 0 = tắt.
     weekend_guard_hours: float = 0.0
 
+    # #12 — ADX trend-strength gate: chỉ tin CHoCH/BOS xác nhận khi ADX (đo trên
+    #   LTF, tại đúng nến xác nhận) đủ mạnh — tránh sweep+CHoCH là nhiễu cấu trúc
+    #   trong thị trường yếu/sideway. MẶC ĐỊNH TẮT — cần backtest-tuning đo trước
+    #   khi bật, theo đúng cách #6 (require_discount_premium) đã làm.
+    adx_filter_enabled: bool = False
+    adx_period: int = 14
+    adx_min_threshold: float = 20.0
+
+    # #13 — ATR-regime gate: chặn khi biến động (ATR, đo trên LTF) co hẹp so với
+    #   lịch sử gần (percentile thấp) tại đúng nến xác nhận — dấu hiệu
+    #   sideway/thanh khoản mỏng. Không chặn percentile cao (trend mạnh vẫn được
+    #   chấp nhận). MẶC ĐỊNH TẮT — cần backtest-tuning đo trước khi bật.
+    atr_regime_filter_enabled: bool = False
+    atr_period: int = 14
+    atr_regime_lookback: int = 100
+    atr_regime_min_percentile: float = 25.0
+
     # #7 — Bộ lọc TIN TỨC mạnh (STUB, defer). Bật sau khi cắm nguồn dữ liệu sự kiện (xem news.py).
     news_filter_enabled: bool = False
     news_csv: str = ""              # đường dẫn CSV sự kiện lịch sử (time,currency,impact)
