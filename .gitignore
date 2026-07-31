@@ -1,5 +1,6 @@
 .env
 bot.log
+scalp_bot.log
 __pycache__/
 *.pyc
 .worktrees/
