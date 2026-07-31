@@ -4,6 +4,20 @@ Cấu hình cho luồng SCALPING M5 độc lập — TÁCH BIỆT HOÀN TOÀN v�
 
 Mỗi symbol có 1 instance riêng, chọn bằng get_scalp_config(name).
 Xem docs/superpowers/specs/2026-07-31-scalp-m5-design.md.
+
+═══════════════════════════════════════════════════════════
+BASELINE CHƯA TUNE (đo 2026-07-31, --from-mt5 --years 2, tham số mặc định bên dưới) —
+KHÔNG dùng live/demo ở trạng thái này, mọi symbol đều LỖ RÒNG kể cả sau khi trừ chi phí:
+  XAUUSDm : n=3774  WR=39.6%  PF=0.84  CAGR=-54.5%  MaxDD=79.97%
+  EURUSDm : n=2987  WR=39.7%  PF=0.77  CAGR=-70.8%  MaxDD=92.08%
+  GBPUSDm : n=4082  WR=38.6%  PF=0.69  CAGR=-85.1%  MaxDD=97.93%
+Tần suất lệnh rất cao (~4-6 lệnh/ngày, cooldown 3 nến M5 = ~15 phút) khiến chi phí
+spread/swap ăn gần hết PnL gộp (vd XAUUSDm: PnL ròng -7,965 / tổng chi phí -7,537 —
+xấp xỉ nhau). Đây ĐÚNG NHƯ SPEC ĐÃ CẢNH BÁO: baseline này KHÔNG được tune sâu trong
+phạm vi kế hoạch ban đầu — cần một vòng backtest-tuning riêng (nới cooldown/giảm tần
+suất, tăng min_atr_points để lọc bớt nến biên độ thấp, hoặc siết dải RSI) trước khi
+cân nhắc chạy demo/live.
+═══════════════════════════════════════════════════════════
 """
 from dataclasses import dataclass, field, replace
 
