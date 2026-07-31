@@ -19,6 +19,7 @@ from smc.order_blocks import find_order_blocks
 from smc.fvg import find_fvgs
 from smc.liquidity import build_liquidity_pools, detect_sweeps, nearest_target_pool
 from risk import TradePlan, calc_lot_size, validate_rr
+from indicators import adx, atr_percentile
 
 log = logging.getLogger("strategy")
 
@@ -54,6 +55,22 @@ def analyze(htf_df: pd.DataFrame, ltf_df: pd.DataFrame, cfg: TradingConfig,
             break
     if confirm is None:
         return None
+
+    # ── 4a. #12 ADX trend-strength gate (tùy chọn) ──────
+    if cfg.adx_filter_enabled:
+        adx_series = adx(ltf_df, cfg.adx_period)
+        adx_at_confirm = adx_series.iloc[confirm.index]
+        if pd.isna(adx_at_confirm) or adx_at_confirm < cfg.adx_min_threshold:
+            log.debug("ADX tại điểm confirm quá yếu — trend không đủ lực, bỏ.")
+            return None
+
+    # ── 4a2. #13 ATR-regime gate (tùy chọn) — chặn khi biến động co hẹp ──
+    if cfg.atr_regime_filter_enabled:
+        pct_series = atr_percentile(ltf_df, cfg.atr_period, cfg.atr_regime_lookback)
+        pct_at_confirm = pct_series.iloc[confirm.index]
+        if pd.isna(pct_at_confirm) or pct_at_confirm < cfg.atr_regime_min_percentile:
+            log.debug("ATR percentile tại điểm confirm quá thấp — biến động co hẹp/chop, bỏ.")
+            return None
 
     # ── 4b. #9 Trần tuổi CẢ CHUỖI: sweep→confirm→entry phải còn tươi ──
     if cfg.max_setup_age_bars > 0:
