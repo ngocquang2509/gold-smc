@@ -79,9 +79,18 @@ lẫn nên bắt buộc dùng `.iloc` tường minh để tránh implementer "d�
   `start_index` đã "ấm" — `rsi()` trả NaN cho `cfg.rsi_period` phần tử đầu),
   trả về `False` (fail-safe — không đoán mò trên NaN, bỏ qua lệnh thay vì cho
   qua).
-- Tìm điểm cực trị trong cửa sổ: `extreme_pos = s.iloc[start_index:confirm_index+1].idxmin()` (bullish)
-  hoặc `.idxmax()` (bearish) — vị trí RSI kiệt sức nhất trong cửa sổ, KHÔNG
-  nhất thiết là `start_index` (sweep có thể không trùng đúng đáy RSI).
+- Tìm điểm cực trị trong cửa sổ, **hoàn toàn bằng vị trí (không qua
+  `idxmin`/`idxmax` của pandas — hai hàm đó trả về LABEL của index, ở đây là
+  `Timestamp`, không phải vị trí, nên không được dùng lại với `.iloc`)**:
+  ```python
+  window = s.iloc[start_index:confirm_index + 1].to_numpy()
+  extreme_pos = start_index + int(window.argmin())   # bullish; .argmax() cho bearish
+  ```
+  `numpy.argmin`/`argmax` trả về vị trí trong mảng (int), cộng lại với
+  `start_index` cho ra vị trí tuyệt đối trong `ltf_df` — dùng trực tiếp với
+  `s.iloc[extreme_pos]`, không đi qua bất kỳ label nào của `s`.
+  `extreme_pos` là vị trí RSI kiệt sức nhất trong cửa sổ, KHÔNG nhất thiết là
+  `start_index` (sweep có thể không trùng đúng đáy RSI).
 - **Bullish**: `s.iloc[extreme_pos] <= cfg.rsi_oversold` **và**
   `s.iloc[confirm_index] > s.iloc[extreme_pos]` (momentum đã quay đầu lên kể
   từ điểm kiệt sức).
@@ -94,9 +103,12 @@ bản nháp trước truyền `sweep_idx = confirm.index` từ `strategy.py`, kh
 `sweep_index == confirm_index` → so sánh một giá trị với chính nó → luôn
 `False` → RSI filter reject **mọi** lệnh khi `require_sweep=False`, mâu thuẫn
 ngầm với combo `rsi_filter_enabled=True` + `require_sweep=False`. Thiết kế mới
-(dùng cửa sổ lùi lại `rsi_period` nến + tìm cực trị bằng `idxmin`/`idxmax`
-thay vì so sánh trực tiếp với `start_index`) loại bỏ hoàn toàn trường hợp suy
-biến này, vì cửa sổ luôn dài hơn 1 nến bất kể có sweep hay không.
+(dùng cửa sổ lùi lại `rsi_period` nến + tìm cực trị bằng `numpy.argmin`/`argmax`
+trên mảng vị trí thuần túy, thay vì so sánh trực tiếp với `start_index` hay
+dùng `idxmin`/`idxmax` của pandas — vốn trả về label chứ không phải vị trí,
+và sẽ vỡ khi dùng lại với `.iloc`) loại bỏ hoàn toàn cả hai lỗi: trường hợp
+suy biến khi không có sweep (cửa sổ luôn dài hơn 1 nến), và lỗi label-vs-position
+khi tra cứu điểm cực trị.
 
 ### Tích hợp vào `strategy.py`
 
