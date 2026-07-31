@@ -4,7 +4,7 @@
 
 **Goal:** Add an independent, single-timeframe (M5) scalping trading stream — EMA trend-pullback + RSI momentum + ATR-based SL/TP — usable on XAUUSDm/EURUSDm/GBPUSDm, running as a separate process from the existing SMC bot with zero shared config/risk/journal state.
 
-**Architecture:** 4 new files mirror the existing `config.py`/`strategy.py`/`backtest.py`/`main.py` split: `scalp_config.py` (own dataclass schema, 3 symbol instances), `scalp_strategy.py` (pure `analyze_scalp()` function, no HTF), `scalp_backtest.py` (bar-by-bar M5 backtest, own SL/TP-only exit engine — does NOT call `risk.manage_step`), `scalp_main.py` (live/demo loop, market-order entry, no breakeven/partial management needed since SL/TP are fixed at the broker). Reuses `risk.py`'s `calc_lot_size`/`validate_rr`/`trade_cost`/`PositionState`/`TradePlan`, `journal.py`'s `TradeJournal` (with an override path), `mt5_client.py`'s `MT5Client` as-is, and `notifier.py`'s `TelegramNotifier` unchanged.
+**Architecture:** 4 new files mirror the existing `config.py`/`strategy.py`/`backtest.py`/`main.py` split: `scalp_config.py` (own dataclass schema, 3 symbol instances), `scalp_strategy.py` (pure `analyze_scalp()` function, no HTF), `scalp_backtest.py` (bar-by-bar M5 backtest, own SL/TP-only exit engine — does NOT call `risk.manage_step`), `scalp_main.py` (live/demo loop, market-order entry, no breakeven/partial management needed since SL/TP are fixed at the broker). Reuses `risk.py`'s `calc_lot_size`/`validate_rr`/`trade_cost`/`PositionState`/`TradePlan`/`RiskGuard`, `journal.py`'s `TradeJournal` (with an override path), `mt5_client.py`'s `MT5Client` as-is, and `notifier.py`'s `TelegramNotifier` unchanged.
 
 **Tech Stack:** Python, pandas (EMA/RSI/ATR computed manually via `.ewm()` — no new dependency), existing `MetaTrader5` wrapper.
 
@@ -316,26 +316,44 @@ def analyze_scalp(df: pd.DataFrame, cfg, balance: float, symbol_info: dict) -> T
 
 - [ ] **Step 2: Sanity-check against synthetic data covering the guard cases**
 
-Scratch script (not committed):
+Scratch script (not committed). **Important**: a plain monotonically-increasing price
+ramp is NOT a valid test fixture here — Wilder RSI saturates to 100 on a ramp with zero
+down-candles, which fails the `rsi_buy_max=70.0` gate even though the implementation is
+correct (this exact mistake was caught in plan review — don't reintroduce it). The
+fixture below uses an oscillating-but-net-upward warmup series (so RSI cools into the
+band) followed by one explicitly crafted green pullback bar (low dips to touch EMA20,
+opens near that low, closes back above EMA20) — verified by hand to produce RSI≈69.3,
+inside `[45, 70]`:
 
 ```python
+import math
 import pandas as pd
+from dataclasses import replace
 from scalp_config import get_scalp_config
-from scalp_strategy import analyze_scalp
+from scalp_strategy import _ema, analyze_scalp
 
 cfg = get_scalp_config("XAUUSDm")
 symbol_info = {"contract_size": 100.0, "volume_min": 0.01, "volume_step": 0.01,
               "volume_max": 100.0, "point": 0.01, "digits": 2}
 
-def make_uptrend_df(n=60):
+def make_uptrend_df():
+    # 54 nến dao động NHƯNG có drift tăng ròng — giữ RSI không bão hòa ở 100.
     rows = []
-    price = 2000.0
-    for i in range(n - 1):
-        price += 0.3
-        rows.append({"open": price - 0.15, "high": price + 0.3, "low": price - 0.3, "close": price + 0.1})
-    # nến cuối: pullback chạm EMA20 rồi bật lại (low thấp, close xanh mạnh)
-    rows.append({"open": price + 0.1, "high": price + 1.5, "low": price - 3.0, "close": price + 1.2})
-    return pd.DataFrame(rows)
+    for i in range(54):
+        osc = math.sin(i / 2.5) * 1.0
+        base = 2000.0 + i * 0.12 + osc
+        prev_close = rows[-1]["close"] if rows else base
+        open_p, close_p = prev_close, base
+        rows.append({"open": open_p, "high": max(open_p, close_p) + 0.15,
+                     "low": min(open_p, close_p) - 0.15, "close": close_p})
+    df = pd.DataFrame(rows)
+    # Nến trigger: craft riêng dựa trên EMA20 hiện tại — chạm đáy rồi bật xanh mạnh.
+    ef = _ema(df["close"], cfg.ema_fast).iloc[-1]
+    low_p = ef - 0.5
+    open_p = low_p + 0.1
+    close_p = ef + 1.0
+    trigger = {"open": open_p, "high": close_p + 0.2, "low": low_p, "close": close_p}
+    return pd.concat([df, pd.DataFrame([trigger])], ignore_index=True)
 
 df = make_uptrend_df()
 plan = analyze_scalp(df, cfg, balance=10_000, symbol_info=symbol_info)
@@ -346,15 +364,18 @@ assert plan is not None and plan.direction == "buy", "Kỳ vọng có tín hiệ
 short_df = df.iloc[-5:]
 assert analyze_scalp(short_df, cfg, 10_000, symbol_info) is None, "Kỳ vọng None khi thiếu nến warmup"
 
-# ATR gate: cfg.min_atr_points cực cao → luôn bị chặn
-high_floor_cfg = cfg
-high_floor_cfg.min_atr_points = 999.0
+# ATR gate: min_atr_points cực cao → luôn bị chặn. Dùng replace() để KHÔNG mutate `cfg`
+# gốc (mutate alias trực tiếp là bẫy copy-paste — bản sao độc lập cho từng assertion).
+high_floor_cfg = replace(cfg, min_atr_points=999.0)
 assert analyze_scalp(df, high_floor_cfg, 10_000, symbol_info) is None, "Kỳ vọng None khi ATR floor quá cao"
 
 print("OK — analyze_scalp sanity checks passed")
 ```
 
-Expected: prints a `TradePlan(direction='buy', ...)`, then `OK — analyze_scalp sanity checks passed` with no assertion error.
+Expected: prints a `TradePlan(direction='buy', ..., rr=1.48, ...)` (rr≈1.5 by
+construction — sl_atr_mult=1.2/tp_atr_mult=1.8 — exact value depends on rounding), then
+`OK — analyze_scalp sanity checks passed` with no assertion error. This exact fixture
+was verified end-to-end against the real `risk.py` before being written into this plan.
 
 - [ ] **Step 3: Commit**
 
@@ -399,7 +420,7 @@ except Exception:
     pass
 from scalp_config import get_scalp_config
 from scalp_strategy import analyze_scalp
-from risk import PositionState, position_pnl, trade_cost
+from risk import PositionState, RiskGuard, position_pnl, trade_cost
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("scalp_backtest")
@@ -482,11 +503,13 @@ def run_backtest(m5: pd.DataFrame, cfg, initial_balance: float = 10_000.0,
     last_exit_i = -10 ** 9
     trades_today = 0
     trade_day = None
+    guard = RiskGuard(cfg.max_daily_loss_pct, cfg.portfolio_heat_pct)
     warmup = max(cfg.ema_slow, cfg.atr_period, cfg.rsi_period) + 1
 
     for i in range(warmup, len(m5)):
         now = m5.index[i]
         bar = m5.iloc[i]
+        guard.update_day(now.date(), balance)
 
         if open_trade:
             delta, row, closed = _manage_scalp_step(open_trade, bar["high"], bar["low"],
@@ -500,7 +523,7 @@ def run_backtest(m5: pd.DataFrame, cfg, initial_balance: float = 10_000.0,
 
         equity_curve.append({"time": now, "balance": balance})
 
-        if open_trade:
+        if open_trade or guard.daily_loss_exceeded(balance):
             continue
         if now.date() != trade_day:
             trade_day = now.date()
@@ -689,7 +712,7 @@ from scalp_strategy import analyze_scalp
 from mt5_client import MT5Client
 from journal import TradeJournal
 from notifier import TelegramNotifier
-from risk import PositionState, position_pnl, trade_cost
+from risk import PositionState, RiskGuard, position_pnl, trade_cost
 
 logging.basicConfig(
     level=logging.INFO,
@@ -755,6 +778,7 @@ class ScalpRunner:
     cfg: ScalpConfig
     client: MT5Client
     journal: TradeJournal
+    guard: RiskGuard
     notifier: TelegramNotifier
     symbol_info: dict
     last_m5_bar: pd.Timestamp | None = None
@@ -762,7 +786,6 @@ class ScalpRunner:
     trades_today: int = 0
     trade_day: date | None = None
     had_open: bool = False
-    day_start_balance: float | None = None
 
 
 def build_scalp_runner(name: str) -> ScalpRunner | None:
@@ -772,28 +795,26 @@ def build_scalp_runner(name: str) -> ScalpRunner | None:
         log.error(f"⛔ Bỏ qua {cfg.symbol} — không kết nối/chọn được trên broker.")
         return None
     symbol_info = client.get_symbol_info()
+    guard = RiskGuard(cfg.max_daily_loss_pct, cfg.portfolio_heat_pct)
     journal = TradeJournal(cfg.symbol, path=f"scalp_trades_{cfg.symbol}.csv")
     notifier = TelegramNotifier.from_config(cfg)
     log.info(f"🚀 [SCALP] {cfg.symbol} sẵn sàng | M5 EMA{cfg.ema_fast}/{cfg.ema_slow} | "
              f"risk {cfg.risk_per_trade_pct}%/lệnh | dry_run={cfg.dry_run}")
     log.info(f"📁 [SCALP {cfg.symbol}] Nhật ký: {journal.path.resolve()}")
-    return ScalpRunner(cfg=cfg, client=client, journal=journal, notifier=notifier,
-                       symbol_info=symbol_info)
+    return ScalpRunner(cfg=cfg, client=client, journal=journal, guard=guard,
+                       notifier=notifier, symbol_info=symbol_info)
 
 
 def process_scalp_symbol(runner: ScalpRunner) -> None:
     cfg, client, journal, notifier = runner.cfg, runner.client, runner.journal, runner.notifier
+    guard = runner.guard
     now = client.server_time()
     balance = client.get_balance()
-
-    if runner.day_start_balance is None or now.date() != runner.trade_day:
-        runner.day_start_balance = balance
+    guard.update_day(now.date(), balance)
 
     reconcile_journal(client, journal, notifier)
 
-    daily_loss_pct = ((runner.day_start_balance - balance) / runner.day_start_balance * 100
-                      if runner.day_start_balance else 0)
-    if daily_loss_pct >= cfg.max_daily_loss_pct:
+    if guard.daily_loss_exceeded(balance):
         return
     if not in_session(now, cfg):
         return
@@ -899,6 +920,18 @@ git commit -m "Add scalp_main.py: live/demo loop for M5 scalping stream"
 
 Validates the whole live path end-to-end in `dry_run` mode (paper trades only — no
 real orders placed) before ever flipping `dry_run=False`.
+
+**Known inherited limitation (not a new bug — same pattern as `main.py`):** in
+`dry_run` mode, `n_open` (`process_scalp_symbol`) is computed only from
+`client.open_positions()`, i.e. REAL MT5 positions. Paper trades never create a real
+position, so `n_open` stays 0 and `bars_since_exit` never resets from a paper close —
+meaning `max_open_positions`/`cooldown_bars` are effectively no-ops while
+`dry_run=True`, and the bot can log a new paper signal on every tick with no gap. This
+mirrors `main.py`'s existing dry-run behavior exactly (see `main.py:275-289`), so it is
+NOT something to "fix" as part of this plan — just be aware of it when reading paper
+journal output in Step 1-3 below (expect a denser stream of paper signals than the
+cooldown config alone would suggest; this gating becomes fully effective only once
+`dry_run=False` and real positions exist).
 
 - [ ] **Step 1: Run for one symbol for a few minutes**
 
