@@ -96,7 +96,22 @@ unchanged (still relative to cwd = repo root).
 - `CLAUDE.md`: all commands (`python main.py ...` → `python -m execution.main ...`,
   etc.) and the "Architecture" section's file path references (e.g. `` `config.py` ``
   → `` `config/config.py` ``).
-- `README.md`: any run commands / file paths it documents.
+- `README.md`: any run commands / file paths it documents (includes a project
+  structure tree diagram).
+- `.claude/skills/add-new-symbol/SKILL.md`: hardcoded line references
+  (`config.py:171-217`, `config.py:221-224`, `config.py:226-229`,
+  `backtest.py:39-43`, `backtest.py:31-34`, `backtest.py:36-37`) and mentions of
+  `main.py`/`mt5_client.py` need updating to new paths (and re-verified line
+  numbers, since moving files doesn't change line numbers within a file but the
+  path prefix does).
+- `.claude/skills/backtest-tuning/SKILL.md`: run command
+  `python backtest.py --from-mt5 --symbol <sym> --years 2` →
+  `python -m backtest.backtest --from-mt5 --symbol <sym> --years 2`, plus line
+  references `backtest.py:215`, `backtest.py:230-242`.
+- `.claude/skills/smc-strategy-development/SKILL.md`: line references
+  `main.py:266`, `backtest.py:183-184`, and its frontmatter `description`
+  ("editing strategy.py or any file under smc/") should reflect the new
+  `strategy/strategy.py` / `strategy/smc/` paths.
 
 ## Verification
 
@@ -109,7 +124,7 @@ No test suite exists. Validation is:
    analyze() logic wasn't perturbed).
 3. Repeat step 2 for `python -m backtest.scalp_backtest --csv-m5 ... --symbol XAUUSDm`.
 4. Grep the repo for any remaining flat-style imports (`from config import`, `from
-   strategy import`, `from risk import`, `from mt5_client import`, `from journal
-   import`, `from notifier import`, `from news import`, `from indicators import`,
-   `from scalp_config import`, `from scalp_strategy import`) to confirm none were
-   missed.
+   strategy import`, `from smc.` / `from smc import`, `from risk import`, `from
+   mt5_client import`, `from journal import`, `from notifier import`, `from news
+   import`, `from indicators import`, `from scalp_config import`, `from
+   scalp_strategy import`) to confirm none were missed.
