@@ -1,25 +1,26 @@
 ---
 name: backtest-tuning
-description: Use when tuning config.py parameters or changing strategy.py/smc/* logic in gold-smc-bot, or when asked to backtest, compare PF/winrate/CAGR, or validate a strategy change. Rigid checklist — run baseline backtest, apply change, re-run, compare full-period and half-period (H1/H2) metrics before deciding to keep or revert.
+description: Use when tuning config/config.py parameters or changing strategy/strategy.py/strategy/smc/* logic in gold-smc-bot, or when asked to backtest, compare PF/winrate/CAGR, or validate a strategy change. Rigid checklist — run baseline backtest, apply change, re-run, compare full-period and half-period (H1/H2) metrics before deciding to keep or revert.
 ---
 
 # Backtest Tuning
 
-Validates any change to `config.py`, `strategy.py`, or `smc/*` against a real
-before/after backtest, including a half-period (H1/H2) split to catch
-overfitting that a full-period-only comparison would miss.
+Validates any change to `config/config.py`, `strategy/strategy.py`, or
+`strategy/smc/*` against a real before/after backtest, including a
+half-period (H1/H2) split to catch overfitting that a full-period-only
+comparison would miss.
 
 Create one TodoWrite item per step below and follow them in order — do not
 skip the H1/H2 split even if the full-period result looks good.
 
 ## Step 1: Baseline, full period
 
-Confirm the symbol with the user if not already stated — see `config.py`'s
-`CONFIGS`/`_ALIASES` for the current registry (as of this writing:
-`XAUUSDm`/`gold`, `EURUSDm`/`eurusd`, `GBPUSDm`/`gbpusd`). Run:
+Confirm the symbol with the user if not already stated — see
+`config/config.py`'s `CONFIGS`/`_ALIASES` for the current registry (as of
+this writing: `XAUUSDm`/`gold`, `EURUSDm`/`eurusd`, `GBPUSDm`/`gbpusd`). Run:
 
 ```bash
-python backtest.py --from-mt5 --symbol <sym> --years 2
+python -m backtest.backtest --from-mt5 --symbol <sym> --years 2
 ```
 
 This works identically if data comes from `--csv-ltf`/`--csv-htf` instead —
@@ -33,16 +34,16 @@ are out of scope for the comparison table in Step 5 — don't track them.
 
 ## Step 2: Baseline, half-period split
 
-`backtest.py` has no date-range flag — only `--years N` ("most recent N
-years"), which can't isolate an arbitrary historical window on its own. Don't
-re-run against MT5 for this. Instead, split post-hoc from the two files
-`backtest.py` just wrote: `backtest_trades.csv` and `backtest_equity.csv`.
+`backtest/backtest.py` has no date-range flag — only `--years N` ("most
+recent N years"), which can't isolate an arbitrary historical window on its
+own. Don't re-run against MT5 for this. Instead, split post-hoc from the two
+files it just wrote: `backtest_trades.csv` and `backtest_equity.csv`.
 
 **The trades CSV has one row per fill, not per logical trade** — a trade with
 partial closes produces multiple rows sharing the same `entry_time`/`entry`/
-`direction`. You must reproduce `backtest.py`'s own grouping
-(`_report()`, `backtest.py:215`) before computing anything, or partial-close
-legs get miscounted as separate wins/losses and PF/winrate come out wrong:
+`direction`. You must reproduce `backtest/backtest.py`'s own grouping
+(`_report()`) before computing anything, or partial-close legs get
+miscounted as separate wins/losses and PF/winrate come out wrong:
 
 ```python
 import pandas as pd
@@ -50,7 +51,7 @@ import pandas as pd
 trades = pd.read_csv("backtest_trades.csv", parse_dates=["entry_time"])
 equity = pd.read_csv("backtest_equity.csv", parse_dates=["time"])
 
-# 1. Group fills into logical trades — mirrors backtest.py:215 exactly.
+# 1. Group fills into logical trades — mirrors backtest/backtest.py's _report() exactly.
 g = trades.groupby(["entry_time", "entry", "direction"]).agg(net=("pnl", "sum")).reset_index()
 
 # 2. Midpoint of the tested window, from the equity curve's time span.
@@ -72,8 +73,8 @@ def pf_wr(half):
 n1, wr1, pf1 = pf_wr(h1)
 n2, wr2, pf2 = pf_wr(h2)
 
-# 4. CAGR + max-DD per half — mirrors backtest.py:230-242, windowed to the
-#    half's equity rows instead of the full curve. No re-simulation needed.
+# 4. CAGR + max-DD per half — mirrors backtest/backtest.py's _report(), windowed
+#    to the half's equity rows instead of the full curve. No re-simulation needed.
 def cagr_dd(eq_half, start_bal, end_bal):
     if eq_half.empty:
         return 0.0, 0.0
@@ -95,16 +96,16 @@ cagr2, dd2 = cagr_dd(eq2, eq2["balance"].iloc[0], eq2["balance"].iloc[-1])
 Run this inline (e.g. via a short Python one-off, not a new checked-in
 script) after Step 1's backtest run. **Sanity check before trusting the
 split**: `len(g) == n1 + n2` and the PF computed from `g` in full (no split)
-should match the "Profit factor" printed by `backtest.py` in Step 1 — if it
-doesn't, the CSVs are stale from a previous run; re-run Step 1.
+should match the "Profit factor" printed by `backtest/backtest.py` in Step 1
+— if it doesn't, the CSVs are stale from a previous run; re-run Step 1.
 
 PF/winrate/trade-count, and now CAGR/max-DD, are all tracked per half — fill
 every cell in Step 5's table, none are N/A.
 
 ## Step 3: Apply the change
 
-Edit `config.py` (the relevant per-symbol instance) or `strategy.py`/`smc/*`
-as intended for this tuning session.
+Edit `config/config.py` (the relevant per-symbol instance) or
+`strategy/strategy.py`/`strategy/smc/*` as intended for this tuning session.
 
 ## Step 4: Re-run, full period + split
 

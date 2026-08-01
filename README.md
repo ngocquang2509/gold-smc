@@ -14,23 +14,30 @@ Bot giao dịch vàng theo Smart Money Concepts (SMC), đa khung thời gian H4 
 pip install MetaTrader5 pandas numpy
 ```
 
-Mở MT5, đăng nhập tài khoản **demo**, bật "Algo Trading". Kiểm tra tên symbol vàng của broker (XAUUSD / GOLD / XAUUSDm...) và sửa `symbol` trong `config.py` nếu cần.
+Mở MT5, đăng nhập tài khoản **demo**, bật "Algo Trading". Kiểm tra tên symbol vàng của broker (XAUUSD / GOLD / XAUUSDm...) và sửa `symbol` trong `config/config.py` nếu cần.
 
 ## Cấu trúc dự án
 
+Tổ chức theo vai trò kỹ thuật, mỗi thư mục là 1 package (chạy bằng `python -m` từ gốc dự án):
+
 ```
 gold-smc-bot/
-├── config.py          # Mọi tham số tinh chỉnh
-├── main.py            # Vòng lặp live/demo
-├── backtest.py        # Engine backtest bar-by-bar
-├── strategy.py        # Logic tổng hợp tín hiệu
-├── risk.py            # Position sizing, R:R, daily loss, heat cap
-├── mt5_client.py      # Wrapper MetaTrader5 (kết nối, dữ liệu, lệnh)
-└── smc/
-    ├── structure.py   # Swing, BOS, CHoCH, trend HTF
-    ├── order_blocks.py# Order Block + kiểm tra imbalance
-    ├── fvg.py         # Fair Value Gap
-    └── liquidity.py   # Liquidity pools, sweep, TP theo thanh khoản
+├── config/
+│   └── config.py       # Mọi tham số tinh chỉnh
+├── strategy/
+│   ├── strategy.py      # Logic tổng hợp tín hiệu
+│   └── smc/
+│       ├── structure.py   # Swing, BOS, CHoCH, trend HTF
+│       ├── order_blocks.py# Order Block + kiểm tra imbalance
+│       ├── fvg.py         # Fair Value Gap
+│       └── liquidity.py   # Liquidity pools, sweep, TP theo thanh khoản
+├── risk/
+│   └── risk.py          # Position sizing, R:R, daily loss, heat cap
+├── backtest/
+│   └── backtest.py       # Engine backtest bar-by-bar
+└── execution/
+    ├── main.py           # Vòng lặp live/demo
+    └── mt5_client.py      # Wrapper MetaTrader5 (kết nối, dữ liệu, lệnh)
 ```
 
 ## Logic giao dịch
@@ -54,10 +61,10 @@ gold-smc-bot/
 
 ```bash
 # Tải dữ liệu trực tiếp từ MT5 (chạy trên Windows):
-python backtest.py --from-mt5 --bars 5000 --balance 10000
+python -m backtest.backtest --from-mt5 --bars 5000 --balance 10000
 
 # Hoặc từ CSV (cột: time,open,high,low,close):
-python backtest.py --csv-ltf data/xauusd_m15.csv --csv-htf data/xauusd_h4.csv
+python -m backtest.backtest --csv-ltf data/xauusd_m15.csv --csv-htf data/xauusd_h4.csv
 ```
 
 Kết quả: winrate, PnL, max drawdown + file `backtest_trades.csv`, `backtest_equity.csv`.
@@ -65,12 +72,12 @@ Kết quả: winrate, PnL, max drawdown + file `backtest_trades.csv`, `backtest_
 ### Chạy demo
 
 ```bash
-python main.py
+python -m execution.main
 ```
 
-Ban đầu để `dry_run=True` vài ngày để quan sát tín hiệu trong `bot.log`. Khi hài lòng, đổi `dry_run=False` trong `config.py` — bot đặt lệnh trên tài khoản demo đang đăng nhập.
+Ban đầu để `dry_run=True` vài ngày để quan sát tín hiệu trong `bot.log`. Khi hài lòng, đổi `dry_run=False` trong `config/config.py` — bot đặt lệnh trên tài khoản demo đang đăng nhập.
 
-## Tinh chỉnh đáng thử trong `config.py`
+## Tinh chỉnh đáng thử trong `config/config.py`
 
 - `require_sweep=False` — nới lỏng, nhiều tín hiệu hơn (chất lượng thấp hơn).
 - `entry_mode` — thử `"ob_only"` vs `"fvg_only"` để xem vùng nào cho winrate tốt hơn với vàng.

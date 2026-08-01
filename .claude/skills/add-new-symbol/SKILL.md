@@ -16,14 +16,15 @@ Create one TodoWrite item per step and follow them in order.
 Exact symbol name as it appears in MT5 Market Watch — may carry a
 broker-specific suffix like `m` or `.m` (right-click → "Show All" if it's
 not visible). Collect: price digits, contract size, volume min/step/max,
-point size — via MT5 Symbol Properties, or `mt5_client.get_symbol_info()` if
-a live connection is available.
+point size — via MT5 Symbol Properties, or `execution/mt5_client.get_symbol_info()`
+if a live connection is available.
 
 ## Step 2: Create a new `TradingConfig` instance
 
-Add a new instance to `config.py`, following only the **structural pattern**
-of the `EURUSD` block (`config.py:171-217`) — NOT a copy-paste of its
-contents. That block mixes two different kinds of overrides:
+Add a new instance to `config/config.py`, following only the **structural
+pattern** of the `EURUSD` block — NOT a copy-paste of its contents (line
+numbers drift as the file is tuned; search for `EURUSD = TradingConfig(`).
+That block mixes two different kinds of overrides:
 
 - **(a) Structural price-scale fields** — mechanical consequences of the new
   symbol's price unit: `price_digits`, `eq_tolerance`,
@@ -45,26 +46,26 @@ at `TradingConfig`'s schema default. Those get tuned later via
 
 ## Step 3: Register in `CONFIGS` and `_ALIASES`
 
-Add the new symbol key to `CONFIGS` (`config.py:221-224`) and one or more
-friendly CLI aliases to `_ALIASES` (`config.py:226-229`). Check both the
-**magic_number** (against `CONFIGS`'s existing values) and the chosen
-**alias string(s)** (against `_ALIASES`'s existing keys: `gold`, `xau`,
+Add the new symbol key to `CONFIGS` and one or more friendly CLI aliases to
+`_ALIASES` (both in `config/config.py`, near the bottom of the file). Check
+both the **magic_number** (against `CONFIGS`'s existing values) and the
+chosen **alias string(s)** (against `_ALIASES`'s existing keys: `gold`, `xau`,
 `xauusd`, `vang`, `eur`, `eurusd`) for collisions before writing — a
 duplicate alias silently shadows an existing symbol's shortcut, and a
 duplicate magic_number would cross-contaminate live position management
 between symbols.
 
-## Step 4: Add a `SYMBOL_INFO` entry in `backtest.py` (only if needed)
+## Step 4: Add a `SYMBOL_INFO` entry in `backtest/backtest.py` (only if needed)
 
 Only required if CSV-offline backtesting (`--csv-ltf`/`--csv-htf`) will be
 used for this symbol — live/MT5-sourced backtests (`--from-mt5`) and live
 trading get this data automatically from the broker via
 `mt5_client.get_symbol_info()`. Add an entry to the `SYMBOL_INFO` dict
-(`backtest.py:39-43`, sibling to `SYMBOL_INFO_DEFAULT` at `backtest.py:31-34`)
-with `contract_size`, `volume_min`, `volume_step`, `volume_max`, `point`,
-`digits` from Step 1's gathered facts. A wrong `contract_size` corrupts
-CAGR/max-DD (absolute PnL scale, per `backtest.py:36-37`'s own warning) — it
-must be looked up, never guessed or copied from another symbol.
+(sibling to `SYMBOL_INFO_DEFAULT` just above it) with `contract_size`,
+`volume_min`, `volume_step`, `volume_max`, `point`, `digits` from Step 1's
+gathered facts. A wrong `contract_size` corrupts CAGR/max-DD (absolute PnL
+scale, per that dict's own warning comment) — it must be looked up, never
+guessed or copied from another symbol.
 
 ## Step 5: Measure real trading costs
 
@@ -102,8 +103,8 @@ optionally 7.
 That skill's Step 1 currently says "Confirm the symbol with the user if not
 already stated: `XAUUSDm`/`gold` or `EURUSDm`/`eurusd`" — a hardcoded
 two-symbol list. Now that a new symbol is registered, add it to that list
-(or generalize the wording to reference `config.py`'s `CONFIGS` instead of
-naming symbols directly) so `backtest-tuning`'s own checklist doesn't
+(or generalize the wording to reference `config/config.py`'s `CONFIGS`
+instead of naming symbols directly) so `backtest-tuning`'s own checklist doesn't
 mislead future invocations into thinking only two symbols exist.
 
 ## Edge cases / out of scope
@@ -111,8 +112,8 @@ mislead future invocations into thinking only two symbols exist.
 - **Symbol not visible in Market Watch**: enable "Show All" before trying to
   read its properties.
 - **Wrong `contract_size`**: corrupts CAGR/max-DD (absolute PnL scale) per
-  the existing warning comment in `backtest.py` — must be looked up from the
-  broker, never guessed or copied from another symbol.
+  the existing warning comment in `backtest/backtest.py` — must be looked up
+  from the broker, never guessed or copied from another symbol.
 - **Duplicate `magic_number`**: would cause live position management to
   cross-contaminate between symbols — check uniqueness against `CONFIGS`
   before writing.
@@ -134,5 +135,5 @@ mislead future invocations into thinking only two symbols exist.
   symbols — probe it, don't assume.
 - Out of scope: deep parameter tuning beyond the first baseline (that's
   repeated invocations of `backtest-tuning`), and any change to
-  `main.py`/`mt5_client.py` (verified unnecessary — both are fully generic
-  over `cfg`).
+  `execution/main.py`/`execution/mt5_client.py` (verified unnecessary — both
+  are fully generic over `cfg`).

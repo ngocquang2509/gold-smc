@@ -1,13 +1,13 @@
 ---
 name: smc-strategy-development
-description: Use when editing strategy.py or any file under smc/ (structure, liquidity, order_blocks, fvg, or a new module) in gold-smc-bot. Rigid two-part checklist — Part A protects the invariants that keep live/backtest signal-identical and mandates a backtest-tuning validation handoff; Part B is the template for adding an entirely new SMC primitive (e.g. breaker block, mitigation block). Does not trigger on config.py-only edits — that's the backtest-tuning skill.
+description: Use when editing strategy/strategy.py or any file under strategy/smc/ (structure, liquidity, order_blocks, fvg, or a new module) in gold-smc-bot. Rigid two-part checklist — Part A protects the invariants that keep live/backtest signal-identical and mandates a backtest-tuning validation handoff; Part B is the template for adding an entirely new SMC primitive (e.g. breaker block, mitigation block). Does not trigger on config/config.py-only edits — that's the backtest-tuning skill.
 ---
 
 # SMC Strategy Development
 
-Protects the invariants that keep `strategy.py`'s signal logic identical
-between live and backtest, and gives a verified template for adding a new
-SMC primitive. Two parts:
+Protects the invariants that keep `strategy/strategy.py`'s signal logic
+identical between live and backtest, and gives a verified template for
+adding a new SMC primitive. Two parts:
 
 - **Part A** always applies, even for small edits.
 - **Part B** applies only when introducing an entirely new primitive (new
@@ -18,39 +18,40 @@ Create one TodoWrite item per step and follow them in order.
 
 ## Part A: Protecting invariants (always applies)
 
-**Before editing:** read `strategy.py` (194 lines) to determine which step of
-the *real* entry sequence the change touches — not the simplified 3-step
-summary in its module docstring (lines 1-13), the actual sequence grounded in
-the code's own numbered inline comments:
+**Before editing:** read `strategy/strategy.py` in full to determine which
+step of the *real* entry sequence the change touches — not the simplified
+3-step summary in its module docstring, the actual sequence grounded in the
+code's own numbered inline comments (line numbers drift as the file is
+tuned — search for the cited names/comments rather than trusting exact line
+numbers below):
 
 1. **(#8)** HTF trend (`current_trend_htf`) — neutral → no trade; also gated
    by a max-trend-age check (`cfg.htf_trend_max_age_bars`, documented as `#8`
-   in `smc/structure.py`'s `current_trend_htf` docstring) that forces
-   `neutral` when the last BOS/CHoCH is stale.
+   in `strategy/smc/structure.py`'s `current_trend_htf` docstring) that
+   forces `neutral` when the last BOS/CHoCH is stale.
 2. Liquidity sweep against trend (`detect_sweeps`), gated by `require_sweep`.
 3. CHoCH/BOS confirmation after the sweep, matching trend direction.
 4. **(#9)** Max setup-age cap — sweep→confirm chain must still be "fresh"
-   (`cfg.max_setup_age_bars`, `strategy.py:58-66`).
+   (`cfg.max_setup_age_bars`).
 5. Entry zone: OB or FVG born from the confirming event
    (`_pick_entry_zone`, `cfg.entry_mode`).
-6. **(#4)** Limit placed at the zone edge (not market at close, `strategy.py:79-92`)
-   — only valid if price hasn't already run through the zone.
+6. **(#4)** Limit placed at the zone edge (not market at close) — only valid
+   if price hasn't already run through the zone.
 7. **(#6)** Discount/premium filter via equilibrium — 50% of recent swing
-   range, gated by `cfg.require_discount_premium` (`strategy.py:94-103`).
+   range, gated by `cfg.require_discount_premium` (`_equilibrium`).
 8. **(#5)** SL anchored to the real sweep wick extreme (`last_sweep.extreme`),
-   not the touched pool level (`strategy.py:105-133`); TP from nearest
-   liquidity pool or fixed R:R fallback, capped by `cfg.max_rr`.
-9. Min-SL-distance filter, R:R ≥ `cfg.min_rr` check, position sizing
-   (`strategy.py:136-151`).
+   not the touched pool level; TP from nearest liquidity pool or fixed R:R
+   fallback, capped by `cfg.max_rr`.
+9. Min-SL-distance filter, R:R ≥ `cfg.min_rr` check, position sizing.
 
 **Three invariants that must never break:**
 
 1. **No-lookahead.** `analyze()` only ever receives closed bars. Live drops
-   the forming bar via `.iloc[:-1]` (`main.py:266`); backtest slices
+   the forming bar via `.iloc[:-1]` (`execution/main.py`); backtest slices
    `ltf.iloc[max(0, i + 1 - cfg.ltf_bars): i + 1]` and
-   `htf[htf.index <= now].iloc[-cfg.htf_bars:]` (`backtest.py:183-184`). Any
-   change to scanning windows inside `smc/*.py` must preserve this — no
-   primitive may look at a bar beyond what its caller sliced.
+   `htf[htf.index <= now].iloc[-cfg.htf_bars:]` (`backtest/backtest.py`). Any
+   change to scanning windows inside `strategy/smc/*.py` must preserve this —
+   no primitive may look at a bar beyond what its caller sliced.
 2. **`analyze()` is the single source of truth for signals.** Live and
    backtest must both call the same `strategy.analyze()` — never fork signal
    logic between the two paths.
@@ -60,12 +61,11 @@ the code's own numbered inline comments:
    DataFrame every bar, so these indices only have meaning compared against
    each other *within the same `analyze()` call*. Comparing an `index` from
    one call against a stored value from a previous call is a bug. **This also
-   applies across timeframes within a single call**: `strategy.py` derives
-   `htf_swings`/`htf_pools` from `htf_df` (`strategy.py:112`, `:126`) whose
-   `.index` values live in the HTF slice's own coordinate space — never
-   comparable to the LTF `swings`/`events`/`obs`/`fvgs` indices used
-   elsewhere in the same `analyze()` call, even though both were computed in
-   that one call.
+   applies across timeframes within a single call**: `strategy/strategy.py`
+   derives `htf_swings`/`htf_pools` from `htf_df` whose `.index` values live
+   in the HTF slice's own coordinate space — never comparable to the LTF
+   `swings`/`events`/`obs`/`fvgs` indices used elsewhere in the same
+   `analyze()` call, even though both were computed in that one call.
 
 **After editing:** invoke the `backtest-tuning` skill (via the `Skill` tool,
 not just a prose reminder) to validate the change via a real before/after
@@ -93,8 +93,8 @@ reuses an existing one but with materially different invalidation semantics
 instead of reusing `order_blocks.py`'s test-and-invalidate logic as-is),
 that's Part A + Part B.
 
-**The existing convention**, verified directly against `smc/fvg.py` and
-`smc/order_blocks.py`:
+**The existing convention**, verified directly against `strategy/smc/fvg.py`
+and `strategy/smc/order_blocks.py`:
 
 ```python
 @dataclass
@@ -127,20 +127,21 @@ def find_new_primitives(df: pd.DataFrame, ..., max_age_bars: int = 100) -> list[
 
 **Integration steps into `strategy.analyze()`:**
 
-1. Import the new module at the top of `strategy.py`.
-2. Add any related tuning parameters to `TradingConfig` (`config.py`) — per
-   symbol if gold/EURUSD should behave differently.
+1. Import the new module at the top of `strategy/strategy.py`.
+2. Add any related tuning parameters to `TradingConfig` (`config/config.py`)
+   — per symbol if gold/EURUSD should behave differently.
 3. Decide explicitly which of the 9 entry-sequence steps above this primitive
    replaces or augments (most often step 5, entry-zone selection) — don't
-   silently add a new filter condition without saying so in `strategy.py`'s
-   module docstring.
-4. Update `strategy.py`'s module docstring (currently a 3-step summary) to
-   reflect the new primitive's role.
+   silently add a new filter condition without saying so in
+   `strategy/strategy.py`'s module docstring.
+4. Update `strategy/strategy.py`'s module docstring (currently a 3-step
+   summary) to reflect the new primitive's role.
 
 ## Edge cases / out of scope
 
-- **Pure `config.py` edits** with no `strategy.py`/`smc/*` change: this skill
-  doesn't trigger — use `backtest-tuning` directly.
+- **Pure `config/config.py` edits** with no `strategy/strategy.py`/
+  `strategy/smc/*` change: this skill doesn't trigger — use `backtest-tuning`
+  directly.
 - **Adding a field to an existing dataclass** (not a wholly new primitive):
   apply Part A only, skip Part B.
 - **Ambiguous integration point** (unclear which entry-sequence step a new
