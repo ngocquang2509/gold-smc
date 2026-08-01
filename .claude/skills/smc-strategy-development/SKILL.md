@@ -31,18 +31,25 @@ numbers below):
    forces `neutral` when the last BOS/CHoCH is stale.
 2. Liquidity sweep against trend (`detect_sweeps`), gated by `require_sweep`.
 3. CHoCH/BOS confirmation after the sweep, matching trend direction.
-4. **(#9)** Max setup-age cap — sweep→confirm chain must still be "fresh"
+4. **(#12, optional, off by default)** ADX trend-strength gate at the confirm
+   bar (`cfg.adx_filter_enabled`, `cfg.adx_min_threshold`) — rejects if ADX
+   is too weak or `NaN`.
+5. **(#13, optional, off by default)** ATR-regime gate at the confirm bar
+   (`cfg.atr_regime_filter_enabled`, `cfg.atr_regime_min_percentile`) —
+   rejects if the ATR percentile is too low (volatility contraction/chop) or
+   `NaN`.
+6. **(#9)** Max setup-age cap — sweep→confirm chain must still be "fresh"
    (`cfg.max_setup_age_bars`).
-5. Entry zone: OB or FVG born from the confirming event
+7. Entry zone: OB or FVG born from the confirming event
    (`_pick_entry_zone`, `cfg.entry_mode`).
-6. **(#4)** Limit placed at the zone edge (not market at close) — only valid
+8. **(#4)** Limit placed at the zone edge (not market at close) — only valid
    if price hasn't already run through the zone.
-7. **(#6)** Discount/premium filter via equilibrium — 50% of recent swing
+9. **(#6)** Discount/premium filter via equilibrium — 50% of recent swing
    range, gated by `cfg.require_discount_premium` (`_equilibrium`).
-8. **(#5)** SL anchored to the real sweep wick extreme (`last_sweep.extreme`),
-   not the touched pool level; TP from nearest liquidity pool or fixed R:R
-   fallback, capped by `cfg.max_rr`.
-9. Min-SL-distance filter, R:R ≥ `cfg.min_rr` check, position sizing.
+10. **(#5)** SL anchored to the real sweep wick extreme (`last_sweep.extreme`),
+    not the touched pool level; TP from nearest liquidity pool or fixed R:R
+    fallback, capped by `cfg.max_rr`.
+11. Min-SL-distance filter, R:R ≥ `cfg.min_rr` check, position sizing.
 
 **Three invariants that must never break:**
 
@@ -130,9 +137,9 @@ def find_new_primitives(df: pd.DataFrame, ..., max_age_bars: int = 100) -> list[
 1. Import the new module at the top of `strategy/strategy.py`.
 2. Add any related tuning parameters to `TradingConfig` (`config/config.py`)
    — per symbol if gold/EURUSD should behave differently.
-3. Decide explicitly which of the 9 entry-sequence steps above this primitive
-   replaces or augments (most often step 5, entry-zone selection) — don't
-   silently add a new filter condition without saying so in
+3. Decide explicitly which of the 11 entry-sequence steps above this
+   primitive replaces or augments (most often step 7, entry-zone selection)
+   — don't silently add a new filter condition without saying so in
    `strategy/strategy.py`'s module docstring.
 4. Update `strategy/strategy.py`'s module docstring (currently a 3-step
    summary) to reflect the new primitive's role.

@@ -60,7 +60,7 @@ between symbols.
 Only required if CSV-offline backtesting (`--csv-ltf`/`--csv-htf`) will be
 used for this symbol — live/MT5-sourced backtests (`--from-mt5`) and live
 trading get this data automatically from the broker via
-`mt5_client.get_symbol_info()`. Add an entry to the `SYMBOL_INFO` dict
+`execution/mt5_client.get_symbol_info()`. Add an entry to the `SYMBOL_INFO` dict
 (sibling to `SYMBOL_INFO_DEFAULT` just above it) with `contract_size`,
 `volume_min`, `volume_step`, `volume_max`, `point`, `digits` from Step 1's
 gathered facts. A wrong `contract_size` corrupts CAGR/max-DD (absolute PnL
@@ -100,12 +100,13 @@ optionally 7.
 
 ## Step 7: Update `backtest-tuning/SKILL.md`'s Step 1 wording
 
-That skill's Step 1 currently says "Confirm the symbol with the user if not
-already stated: `XAUUSDm`/`gold` or `EURUSDm`/`eurusd`" — a hardcoded
-two-symbol list. Now that a new symbol is registered, add it to that list
-(or generalize the wording to reference `config/config.py`'s `CONFIGS`
-instead of naming symbols directly) so `backtest-tuning`'s own checklist doesn't
-mislead future invocations into thinking only two symbols exist.
+That skill's Step 1 lists the current symbol registry inline (as of this
+writing: `XAUUSDm`/`gold`, `EURUSDm`/`eurusd`, `GBPUSDm`/`gbpusd`) as a
+hardcoded convenience list. Now that a new symbol is registered, add it to
+that list (or generalize the wording to reference `config/config.py`'s
+`CONFIGS` instead of naming symbols directly) so `backtest-tuning`'s own
+checklist doesn't mislead future invocations into thinking the registry is
+smaller than it actually is.
 
 ## Edge cases / out of scope
 
