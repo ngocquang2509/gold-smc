@@ -89,11 +89,19 @@ code uses, generalized to N cut points). A logical trade (grouped by
 `entry_time`/`entry`/`direction`, same grouping `_report()` already uses) is assigned
 to the window containing its `entry_time`.
 
-**Sanity check** (carried over from the current skill's Step 2): after grouping, the
-script verifies `sum(window trade counts) == total grouped trades` and that the
-full-period PF recomputed from the CSV matches what `backtest.py` printed at run time
-within floating-point tolerance; if not, it errors out asking the user to re-run the
-backtest (stale CSV), instead of silently reporting on stale data.
+**Sanity check** (internal consistency only — carried over in spirit from the current
+skill's Step 2, but scoped to what the script can actually verify on its own): after
+grouping, the script checks `sum(window trade counts) == total grouped trades`. This
+catches a broken window-assignment/grouping bug in the script itself, but — unlike the
+current skill's Step 2, where a human compares the split PF against the PF they just
+watched `backtest.py` print to stdout — the script has no independent copy of the
+"true" PF to check freshness against, since `backtest.py` doesn't persist its printed
+summary anywhere machine-readable. So the script **cannot** detect a stale CSV (e.g.
+`backtest_trades.csv` left over from an earlier run that was never re-run for the
+current change) purely from the CSV's own contents. The skill compensates for this
+directly (see Section 2 below): Step 4 always re-runs `backtest.py` immediately before
+Step 5 reads the CSVs, so staleness is prevented by ordering rather than detected after
+the fact.
 
 **Output files**: none — stdout only, like the rest of the backtest reporting. No new
 CSVs are written by this script.
@@ -127,6 +135,44 @@ Restructure the middle steps around the new script:
 
 Old Step 5's comparison table (Full/H1/H2 as columns) is replaced by the script's
 window-rows table — cleaner for 6 rows than 6 extra columns would be.
+
+**Text that must also be updated, not just the numbered steps above** (the current
+skill has prose outside the step bodies that references the old H1/H2 mechanics by
+name — implementation must catch all of these, not just renumber the step headers):
+
+- **Edge cases → "Stale CSVs"** (currently: *"if the sanity check in Step 2 fails
+  ... re-run Step 1"*). Under the new step order, Step 2 is a file-copy with no
+  sanity check, and the sanity check itself now only catches internal
+  grouping-consistency bugs, not staleness (see Section 1 above). Reword this
+  bullet to state the real safeguard: staleness is prevented by Step 4 always
+  re-running `backtest.py` immediately before Step 5 reads the CSVs — there is no
+  freshness check to "fail" anymore, so drop the old fail/re-run framing entirely.
+- **Step 6's existing low-trade-count sentence** (currently: *"if either half has
+  fewer than 20 grouped trades (post-groupby count from Step 2 ...)"*). Replace
+  with wording that matches the script's own `--min-trades` default (8 per
+  ~4-month window, vs. the old 20 per ~12-month half — roughly the same trade
+  density, scaled down for a window a third the length) and defers to the
+  script's own low-confidence labeling rather than describing a manual groupby
+  that no longer happens in this step.
+
+### Window-boundary and edge-case behavior (script implementation details)
+
+- **Boundary inclusivity**: window *k* (0-indexed) contains trades where
+  `start + k*Δ <= entry_time < start + (k+1)*Δ`, except the last window (*k = N-1*)
+  uses `<=` on the upper bound so the final trade (at the equity curve's max
+  timestamp) is always included — the same half-open-except-last-bucket convention
+  the current H1/H2 split already uses (`h1 = g[entry_time < midpoint]`,
+  `h2 = g[entry_time >= midpoint]`), generalized to N cut points.
+- **`--windows` bounds**: must be a positive integer `>= 2` (matching the current
+  H1/H2's minimum granularity); the script errors out with a clear message rather
+  than silently producing 1 or 0 windows.
+- **Empty or near-empty `backtest_trades.csv`**: if there are zero grouped trades
+  total, the script prints a clear "no trades in this run" message and skips the
+  table/verdict rather than dividing by zero. If `--windows` exceeds the number of
+  distinct months in the equity curve's span (e.g. `--windows 6` on a few weeks of
+  data), the script still creates N equal-*duration* windows as defined above —
+  it does not silently reduce N — so several windows will legitimately show 0
+  trades and be marked low-confidence; this is expected behavior, not an error.
 
 ### 3. Step 6 decision rule (generalized from H1/H2 to N windows)
 
