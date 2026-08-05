@@ -1,0 +1,3 @@
+ticket,symbol,mode,created,direction,entry,sl,tp,lot,rr,risk_amount,reason,result,closed,close_price,profit
+2319847583,XAUUSDm,live,2026-07-31T10:31:13,sell,4073.92,4086.64,4042.11,0.08,2.5,107.58,HTF bearish | buyside_sweep @ 4083.36 | CHOCH LTF | entry FVG,cancelled,2026-07-31T21:34:26,,
+2321537692,XAUUSDm,live,2026-07-31T14:34:27,sell,4051.73,4086.64,3964.44,0.03,2.5,107.58,HTF bearish | buyside_sweep @ 4083.36 | CHOCH LTF | entry FVG,failed,2026-08-04T20:24:00,4087.699,-107.91

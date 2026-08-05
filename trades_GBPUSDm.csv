@@ -1,0 +1,2 @@
+ticket,symbol,mode,created,direction,entry,sl,tp,lot,rr,risk_amount,reason,result,closed,close_price,profit
+2315388165,GBPUSDm,live,2026-07-30T15:45:00,buy,1.34389,1.33655,1.36224,0.14,2.5,107.58,HTF bullish | sellside_sweep @ 1.34 | BOS LTF | entry FVG,cancelled,2026-07-31T17:30:23,,

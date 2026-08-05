@@ -1,2 +1,4 @@
 ticket,symbol,mode,created,direction,entry,sl,tp,lot,rr,risk_amount,reason,result,closed,close_price,profit
-2291060165,EURUSDm,live,2026-07-27T14:24:08,sell,1.13784,1.13986,1.13178,0.94,3.0,190.89,HTF bearish | buyside_sweep @ 1.14 | BOS LTF | entry OB,open,,,
+2291060165,EURUSDm,live,2026-07-27T14:24:08,sell,1.13784,1.13986,1.13178,0.94,3.0,190.89,HTF bearish | buyside_sweep @ 1.14 | BOS LTF | entry OB,failed,2026-07-29T18:02:37,1.13986,-189.88
+2314053362,EURUSDm,live,2026-07-30T13:45:24,buy,1.14787,1.14423,1.15879,0.51,3.0,187.09,HTF bullish | sellside_sweep @ 1.14 | BOS LTF | entry FVG,cancelled,2026-07-31T17:30:23,,
+2321742067,EURUSDm,live,2026-07-31T15:00:07,buy,1.14888,1.14761,1.15269,1.47,3.0,187.09,HTF bullish | sellside_sweep @ 1.15 | CHOCH LTF | entry FVG,cancelled,2026-08-03T20:33:34,,
