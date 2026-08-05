@@ -51,8 +51,8 @@ class TradingConfig:
     # Mỗi cú sweep chỉ giao dịch 1 lần; sau khi 1 lệnh đóng phải chờ cooldown_bars
     # nến LTF mới tìm tín hiệu tiếp. Đây là bộ lọc chống re-entry quan trọng nhất.
     one_trade_per_sweep: bool = True
-    cooldown_bars: int = 8          # ~2 giờ M15 nghỉ sau mỗi lệnh
-    max_trades_per_day: int = 3     # Trần số lệnh/ngày (chống overtrade)
+    cooldown_bars: int = 4          # ~1 giờ M15 nghỉ sau mỗi lệnh (nới từ 8 để tăng tần suất)
+    max_trades_per_day: int = 6     # Trần số lệnh/ngày (nới từ 3 — ưu tiên số lượng)
 
     # ── Lọc chất lượng entry ─────────────────────────────
     min_sl_distance_points: float = 3.0  # SL phải cách entry >= mức này (USD).
@@ -60,10 +60,10 @@ class TradingConfig:
     max_rr: float = 10.0            # Trần R:R cho TP thanh khoản (tránh TP quá xa)
     # #9 — Trần "tuổi" CẢ CHUỖI setup: sweep→CHoCH→entry phải còn tươi. Nếu sweep HOẶC
     #   cú xác nhận cách nến hiện tại > mức này thì bỏ (bối cảnh đã phân rã). 0 = tắt.
-    max_setup_age_bars: int = 30
+    max_setup_age_bars: int = 45    # Nới từ 30 — chấp nhận setup hơi cũ hơn để tăng số lệnh
     # #4 — Lệnh LIMIT nghỉ tại biên vùng hết hạn sau bao nhiêu nến LTF nếu giá không hồi
     #   về khớp (hủy để không "ôm" limit cũ khi bối cảnh đã đổi).
-    entry_expiry_bars: int = 12
+    entry_expiry_bars: int = 20     # Nới từ 12 — limit chờ khớp lâu hơn, tăng số lệnh
     # #6 — Chỉ mua ở nửa DISCOUNT / bán ở nửa PREMIUM của dải giao dịch (equilibrium 50%).
     #   ĐÃ ĐO 2 năm: bật lên LÀM GIẢM mạnh cả 2 symbol (vàng: 270→108 lệnh, EURUSD PF 1.24→0.88).
     #   Lý do: đây là chiến lược THUẬN xu hướng — vùng retest OB/FVG thường nằm ở nửa premium
@@ -113,7 +113,7 @@ class TradingConfig:
 
     # ── Risk Management ──────────────────────────────────
     risk_per_trade_pct: float = 1.15   # % tài khoản mỗi lệnh (1.15% để đạt mục tiêu ~30%/năm)
-    min_rr: float = 2.0                # Chỉ vào lệnh nếu R:R >= 2
+    min_rr: float = 1.5                # Chỉ vào lệnh nếu R:R >= 1.5 (nới từ 2.0 — ưu tiên số lệnh)
     tp_rr: float = 2.5                 # TP mặc định = 2.5R (nếu không dùng liquidity target)
     tp_mode: str = "liquidity"         # "fixed_rr" | "liquidity" (TP tại pool thanh khoản đối diện)
     sl_buffer_points: float = 1.5      # Đệm SL ngoài OB/swing (USD) tránh quét râu nến
@@ -141,8 +141,8 @@ class TradingConfig:
     # ── Session filter (giờ server MT5, thường GMT+2/+3) ─
     use_session_filter: bool = True
     sessions: list = field(default_factory=lambda: [
-        ("08:00", "17:00"),   # London → NY overlap (khung thanh khoản mạnh của vàng)
-    ])                        # Tránh phiên Á loãng & giờ rollover cuối US (winrate kém)
+        ("06:00", "19:00"),   # Nới từ 08:00-17:00 — bắt thêm phiên London mở sớm/NY muộn
+    ])                        # Vẫn tránh phiên Á loãng nhất & giờ rollover sâu (winrate kém)
 
     # ── Telegram notifications ───────────────────────────
     # Bắn tin khi: có tín hiệu / đặt lệnh thành công / lệnh đóng (CHỈ ở chế độ live,
@@ -199,11 +199,11 @@ EURUSD = TradingConfig(
     #   Full-2y: PF 1.58, WR 48%, CAGR 37.6%, MaxDD 6.2%, ~186 lệnh.
     #   Robustness: PF nửa đầu 1.96 / nửa sau 1.28 (edge yếu dần — kỳ vọng thực gần H2 hơn).
     fvg_min_size_points=0.0002,    # FVG tối thiểu 2 pip
-    min_rr=2.5,                    # chỉ nhận TP thanh khoản nếu >= 2.5R, nếu không dùng fixed
+    min_rr=1.7,                    # nới từ 2.5 — ưu tiên số lệnh (2026-07-31)
     tp_rr=3.0,                     # TP fixed = 3.0R (sweet spot PF cho EURUSD)
     tp_mode="liquidity",           # ưu tiên pool thanh khoản, fallback 3.0R
     ob_require_imbalance=True,     # OB phải kèm FVG (lọc chất lượng)
-    sessions=[("13:00", "18:00")], # CHỈ phiên NY-overlap (giờ server) — PF cao nhất cho EURUSD
+    sessions=[("10:00", "20:00")], # nới từ 13:00-18:00 — bắt thêm London + NY chiều muộn
     # ── Tune lại 2 năm SAU khi sửa 9 lỗi (limit-entry #4, SL-theo-râu #5, ...) ──
     #   Cơ chế mới ĐÚNG hơn nhưng làm lộ ra edge EURUSD mỏng hơn backtest cũ (vốn được
     #   thổi phồng bởi chính các lỗi đó). Best honest: PF 1.31, WR 47%, CAGR 12.4%, DD 8.1%, n=131.
