@@ -4,7 +4,8 @@ EMA trend-pullback + RSI momentum + ATR volatility/SL-TP. Xem
 docs/superpowers/specs/2026-07-31-scalp-m5-design.md cho spec đầy đủ.
 """
 import pandas as pd
-from risk import TradePlan, calc_lot_size, validate_rr
+from risk.risk import TradePlan, calc_lot_size, validate_rr
+from strategy.indicators import adx as _adx_indicator
 
 
 def _ema(series: pd.Series, span: int) -> pd.Series:
@@ -37,6 +38,8 @@ def analyze_scalp(df: pd.DataFrame, cfg, balance: float, symbol_info: dict) -> T
     """Phân tích 1 khung M5 độc lập. `df` PHẢI đã bỏ nến đang chạy — caller truyền
     df.iloc[:-1] (bất biến no-repaint, giống strategy.analyze của bot SMC)."""
     min_bars = max(cfg.ema_slow, cfg.atr_period, cfg.rsi_period) + 1
+    if cfg.adx_filter_enabled:
+        min_bars = max(min_bars, 2 * cfg.adx_period + 1)
     if len(df) < min_bars:
         return None
 
@@ -53,6 +56,11 @@ def analyze_scalp(df: pd.DataFrame, cfg, balance: float, symbol_info: dict) -> T
     a = atr.iloc[-1]
     if not (a > 0) or a < cfg.min_atr_points:
         return None   # thị trường quá lặng, không đủ biên độ cho SL/TP theo ATR
+
+    if cfg.adx_filter_enabled:
+        adx_val = _adx_indicator(df, cfg.adx_period).iloc[-1]
+        if pd.isna(adx_val) or adx_val < cfg.adx_min_threshold:
+            return None   # trend yếu/sideway — chặn để lọc bớt chop
 
     last = df.iloc[-1]
     r = rsi.iloc[-1]
