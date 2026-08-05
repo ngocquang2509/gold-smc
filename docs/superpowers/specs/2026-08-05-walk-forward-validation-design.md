@@ -138,22 +138,55 @@ window-rows table — cleaner for 6 rows than 6 extra columns would be.
 
 **Text that must also be updated, not just the numbered steps above** (the current
 skill has prose outside the step bodies that references the old H1/H2 mechanics by
-name — implementation must catch all of these, not just renumber the step headers):
+name — every one of the following locations must be updated; this list is the
+authoritative enumeration, not the step-body rewrites in isolation):
 
+- **YAML frontmatter `description:`** — currently ends "...compare full-period and
+  half-period (H1/H2) metrics before deciding to keep or revert." Change to
+  reference the N-window walk-forward comparison instead of H1/H2.
+- **Intro prose** ("Validates any change to ... including a half-period (H1/H2)
+  split to catch overfitting...") and the instruction "do not skip the H1/H2 split
+  even if the full-period result looks good" — both name H1/H2 specifically and
+  must be reworded to describe the N-window split.
+- **Step 4's text, "Repeat Step 1 and Step 2 against the changed code."** This is
+  not just stale wording — under the new step order it is **substantively wrong**:
+  the new Step 2 copies the current run's CSVs to `*_baseline.csv`, and repeating
+  it in Step 4 would overwrite those baseline files with the "after" run's data,
+  destroying the very baseline Step 5 needs to diff against. Step 4 must instead
+  read: "Repeat Step 1 only (re-run the backtest command) — do **not** repeat
+  Step 2; the baseline CSVs from before the change must be left untouched so Step
+  5 can compare against them."
 - **Edge cases → "Stale CSVs"** (currently: *"if the sanity check in Step 2 fails
-  ... re-run Step 1"*). Under the new step order, Step 2 is a file-copy with no
-  sanity check, and the sanity check itself now only catches internal
-  grouping-consistency bugs, not staleness (see Section 1 above). Reword this
-  bullet to state the real safeguard: staleness is prevented by Step 4 always
-  re-running `backtest.py` immediately before Step 5 reads the CSVs — there is no
-  freshness check to "fail" anymore, so drop the old fail/re-run framing entirely.
-- **Step 6's existing low-trade-count sentence** (currently: *"if either half has
-  fewer than 20 grouped trades (post-groupby count from Step 2 ...)"*). Replace
-  with wording that matches the script's own `--min-trades` default (8 per
-  ~4-month window, vs. the old 20 per ~12-month half — roughly the same trade
-  density, scaled down for a window a third the length) and defers to the
-  script's own low-confidence labeling rather than describing a manual groupby
-  that no longer happens in this step.
+  ... re-run Step 1"*). Reword to state the real safeguard: staleness is prevented
+  by ordering — Step 4 always re-runs `backtest.py` immediately before Step 5
+  reads the CSVs — there is no freshness check to "fail" anymore, so drop the old
+  fail/re-run framing entirely.
+- **Edge cases → "MT5 unreachable"** (currently: *"The Step 2 split logic is
+  identical either way"*). Update to reference the new script instead of the old
+  inline split logic — the point being preserved (CSV-sourced data or
+  MT5-sourced, the post-hoc analysis is the same) still holds and should still be
+  stated, just via the script rather than "split logic."
+- **Edge cases → "Low trade count in a half-period"** heading and body (currently:
+  *"if either half has fewer than 20 grouped trades (post-groupby count from Step
+  2 ...)"*). Rename the heading away from "half-period" and replace the body with
+  wording that matches the script's own `--min-trades` default (8 per ~4-month
+  window, vs. the old 20 per ~12-month half — roughly the same trade density,
+  scaled down for a window a third the length), deferring to the script's own
+  low-confidence labeling rather than describing a manual groupby that no longer
+  happens in this step.
+
+**Step 4 clarification**: unlike Section 2's other "unchanged" steps, Step 4's
+*command* is unchanged (same `backtest.py` invocation as Step 1) but its
+surrounding instruction text is not — see the bullet above. Anyone porting the old
+skill's Step 4 phrasing verbatim into the new version would silently destroy the
+baseline CSVs, so this is called out explicitly rather than left implicit in "Step
+4 (re-run) — unchanged" above.
+
+**Compare-mode asymmetric-emptiness**: if one side (baseline or current) has zero
+grouped trades and the other does not, the script still prints both tables (the
+empty side shows an explicit "no trades" row/table rather than being skipped) and
+the verdict logic treats the empty side as PF/winrate undefined — reported as such,
+not silently coerced to 0 or skipped from the comparison.
 
 ### Window-boundary and edge-case behavior (script implementation details)
 
