@@ -13,13 +13,13 @@ Chiến lược SMC đa khung:
 """
 import logging
 import pandas as pd
-from config import TradingConfig
-from smc.structure import find_swings, detect_structure, current_trend_htf
-from smc.order_blocks import find_order_blocks
-from smc.fvg import find_fvgs
-from smc.liquidity import build_liquidity_pools, detect_sweeps, nearest_target_pool
-from risk import TradePlan, calc_lot_size, validate_rr
-from indicators import adx, atr_percentile
+from config.config import TradingConfig
+from strategy.smc.structure import find_swings, detect_structure, current_trend_htf
+from strategy.smc.order_blocks import find_order_blocks
+from strategy.smc.fvg import find_fvgs
+from strategy.smc.liquidity import build_liquidity_pools, detect_sweeps, nearest_target_pool
+from risk.risk import TradePlan, calc_lot_size, validate_rr
+from strategy.indicators import adx, atr_percentile
 
 log = logging.getLogger("strategy")
 

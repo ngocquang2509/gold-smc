@@ -3,14 +3,14 @@ Live/demo loop cho luồng SCALPING M5 độc lập — tiến trình RIÊNG v�
 Không dùng chung magic_number/journal/risk với bot SMC. Khớp MARKET ngay khi có tín
 hiệu, SL/TP đặt cứng ở broker — KHÔNG cần manage_open_positions (không BE/partial).
 
-Chạy 1 symbol:  python scalp_main.py --symbol XAUUSDm
-Chạy nhiều:     python scalp_main.py --symbols EURUSDm,GBPUSDm
-Mặc định dry_run=True trong scalp_config.py — kiểm tra kỹ trước khi tắt.
+Chạy 1 symbol:  python -m execution.scalp_main --symbol XAUUSDm
+Chạy nhiều:     python -m execution.scalp_main --symbols EURUSDm,GBPUSDm
+Mặc định dry_run=True trong config/scalp_config.py — kiểm tra kỹ trước khi tắt.
 
-LƯU Ý VẬN HÀNH (xem spec, mục "Rủi ro cần xác minh"): chạy song song với main.py nhắm
-CÙNG 1 terminal MT5 thường an toàn (mỗi process có kênh IPC riêng) nhưng NÊN xác minh
-bằng 1 lượt demo ngắn trước khi tin tưởng ở live — và market_order() ở mt5_client.py
-chưa từng được gọi thật trong codebase này trước luồng này.
+LƯU Ý VẬN HÀNH (xem spec, mục "Rủi ro cần xác minh"): chạy song song với execution.main
+nhắm CÙNG 1 terminal MT5 thường an toàn (mỗi process có kênh IPC riêng) nhưng NÊN xác minh
+bằng 1 lượt demo ngắn trước khi tin tưởng ở live — và market_order() ở
+execution/mt5_client.py chưa từng được gọi thật trong codebase này trước luồng này.
 """
 import time
 import logging
@@ -18,12 +18,12 @@ import argparse
 from dataclasses import dataclass
 from datetime import date
 import pandas as pd
-from scalp_config import get_scalp_config, ScalpConfig
-from scalp_strategy import analyze_scalp
-from mt5_client import MT5Client
-from journal import TradeJournal
-from notifier import TelegramNotifier
-from risk import PositionState, RiskGuard, position_pnl, trade_cost
+from config.scalp_config import get_scalp_config, ScalpConfig
+from strategy.scalp_strategy import analyze_scalp
+from execution.mt5_client import MT5Client
+from execution.journal import TradeJournal
+from execution.notifier import TelegramNotifier
+from risk.risk import PositionState, RiskGuard, position_pnl, trade_cost
 
 logging.basicConfig(
     level=logging.INFO,

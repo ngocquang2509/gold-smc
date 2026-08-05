@@ -2,8 +2,8 @@
 Backtest cho luồng SCALPING M5 độc lập (bar-by-bar, single-timeframe, không HTF).
 
 Dùng:
-    python scalp_backtest.py --from-mt5 --symbol XAUUSDm --years 2 --balance 10000
-    python scalp_backtest.py --csv-m5 data/xauusd_m5.csv --symbol XAUUSDm
+    python -m backtest.scalp_backtest --from-mt5 --symbol XAUUSDm --years 2 --balance 10000
+    python -m backtest.scalp_backtest --csv-m5 data/xauusd_m5.csv --symbol XAUUSDm
 
 CSV cần cột: time,open,high,low,close (time ISO hoặc epoch giây).
 """
@@ -16,9 +16,9 @@ try:
     sys.stdout.reconfigure(encoding="utf-8")
 except Exception:
     pass
-from scalp_config import get_scalp_config
-from scalp_strategy import analyze_scalp
-from risk import PositionState, RiskGuard, position_pnl, trade_cost
+from config.scalp_config import get_scalp_config
+from strategy.scalp_strategy import analyze_scalp
+from risk.risk import PositionState, RiskGuard, position_pnl, trade_cost
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("scalp_backtest")
@@ -52,7 +52,7 @@ def load_csv(path: str) -> pd.DataFrame:
 
 
 def load_from_mt5(cfg, years: float = 2.0):
-    from mt5_client import MT5Client, TIMEFRAME_MAP, mt5
+    from execution.mt5_client import MT5Client, TIMEFRAME_MAP, mt5
     from datetime import datetime, timedelta
     client = MT5Client(cfg.symbol, cfg.magic_number, cfg.deviation)
     if not client.connect():

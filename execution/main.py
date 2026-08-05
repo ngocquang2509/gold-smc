@@ -1,10 +1,10 @@
 """
 Vòng lặp giao dịch live/demo — hỗ trợ chạy 1 HOẶC NHIỀU symbol trong CÙNG 1 tiến trình.
-Chạy 1 symbol (tương thích ngược): python main.py --symbol XAUUSDm   (mặc định)
-Chạy nhiều symbol cùng lúc:        python main.py --symbols EURUSDm,GBPUSDm
-Mỗi symbol dùng config RIÊNG trong config.py (magic_number riêng), risk/journal
+Chạy 1 symbol (tương thích ngược): python -m execution.main --symbol XAUUSDm   (mặc định)
+Chạy nhiều symbol cùng lúc:        python -m execution.main --symbols EURUSDm,GBPUSDm
+Mỗi symbol dùng config RIÊNG trong config/config.py (magic_number riêng), risk/journal
 độc lập theo symbol — chỉ dùng CHUNG 1 kết nối MT5 (global) và 1 vòng lặp tuần tự.
-Mặc định dry_run trong config.py — kiểm tra trước khi chạy tiền thật.
+Mặc định dry_run trong config/config.py — kiểm tra trước khi chạy tiền thật.
 """
 import time
 import logging
@@ -12,13 +12,13 @@ import argparse
 from dataclasses import dataclass
 from datetime import datetime, date, timedelta
 import pandas as pd
-from config import get_config, TradingConfig
-from mt5_client import MT5Client
-from strategy import analyze
-from risk import RiskGuard, PositionState, manage_tick, manage_step
-from journal import TradeJournal
-from notifier import TelegramNotifier
-from news import in_news_blackout
+from config.config import get_config, TradingConfig
+from execution.mt5_client import MT5Client
+from strategy.strategy import analyze
+from risk.risk import RiskGuard, PositionState, manage_tick, manage_step
+from execution.journal import TradeJournal
+from execution.notifier import TelegramNotifier
+from execution.news import in_news_blackout
 
 logging.basicConfig(
     level=logging.INFO,

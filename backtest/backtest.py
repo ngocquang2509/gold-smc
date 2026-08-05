@@ -5,9 +5,9 @@ Backtest engine đơn giản (bar-by-bar, không look-ahead):
 - Mô phỏng SL/TP, breakeven, partial close.
 
 Dùng:
-    python backtest.py --csv-ltf data/xauusd_m15.csv --csv-htf data/xauusd_h4.csv
+    python -m backtest.backtest --csv-ltf data/xauusd_m15.csv --csv-htf data/xauusd_h4.csv
 hoặc để bot tự tải từ MT5 (chạy trên Windows có MT5):
-    python backtest.py --from-mt5 --bars 5000
+    python -m backtest.backtest --from-mt5 --bars 5000
 CSV cần cột: time,open,high,low,close (time ISO hoặc epoch giây).
 """
 import argparse
@@ -20,10 +20,10 @@ try:
     sys.stdout.reconfigure(encoding="utf-8")
 except Exception:
     pass
-from config import get_config
-from strategy import analyze
-from risk import RiskGuard, PositionState, manage_step
-from news import in_news_blackout
+from config.config import get_config
+from strategy.strategy import analyze
+from risk.risk import RiskGuard, PositionState, manage_step
+from execution.news import in_news_blackout
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("backtest")
@@ -78,7 +78,7 @@ def load_csv(path: str) -> pd.DataFrame:
 def load_from_mt5(cfg, years: float = 2.0):
     """Tải dữ liệu theo KHOẢNG NGÀY (mặc định 2 năm gần nhất) thay vì số nến cố định.
     Dùng copy_rates_range để phủ đủ 2 năm cho cả M15 lẫn H4."""
-    from mt5_client import MT5Client, TIMEFRAME_MAP, mt5
+    from execution.mt5_client import MT5Client, TIMEFRAME_MAP, mt5
     from datetime import datetime, timedelta
     client = MT5Client(cfg.symbol, cfg.magic_number, cfg.deviation)
     if not client.connect():
