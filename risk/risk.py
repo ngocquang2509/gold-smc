@@ -135,18 +135,22 @@ def _exit_row(state: PositionState, exit_price, exit_time, pnl, cost, result, lo
     }
 
 
-def manage_step(state: PositionState, high: float, low: float, close: float,
+def manage_step(state: PositionState, open_: float, high: float, low: float, close: float,
                 now, cfg, apply_costs: bool = True) -> tuple[float, list[dict], bool]:
     """Quản lý theo NẾN (backtest + paper). Trả về (balance_delta, rows, closed).
-    Thứ tự bảo thủ trong 1 nến: SL → TP → (BE/partial tại close)."""
+    Thứ tự bảo thủ trong 1 nến: SL → TP → (BE/partial tại close).
+    GAP: nếu nến MỞ đã vượt qua SL (gap cuối tuần/tin), khớp SL tại giá open — lỗ thật
+    lớn hơn 1R, không phải tại mức SL. Gap qua TP thì vẫn khớp tại TP (không thưởng)."""
     is_buy = state.direction == "buy"
     hit_sl = low <= state.sl if is_buy else high >= state.sl
     hit_tp = high >= state.tp if is_buy else low <= state.tp
 
     if hit_sl:
+        gapped = open_ <= state.sl if is_buy else open_ >= state.sl
+        fill = open_ if gapped else state.sl
         cost = trade_cost(state, now, state.lot, cfg) if apply_costs else 0.0
-        pnl = position_pnl(state, state.sl) - cost
-        return pnl, [_exit_row(state, state.sl, now, pnl, cost, "SL/BE")], True
+        pnl = position_pnl(state, fill) - cost
+        return pnl, [_exit_row(state, fill, now, pnl, cost, "SL-GAP" if gapped else "SL/BE")], True
     if hit_tp:
         cost = trade_cost(state, now, state.lot, cfg) if apply_costs else 0.0
         pnl = position_pnl(state, state.tp) - cost

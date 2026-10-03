@@ -8,7 +8,7 @@ An automated trading bot for the owner's own Exness MT5 account (XAUUSDm, EURUSD
 
 **The project is mid-rebuild.** The old SMC (H4→M15) and M5 scalp strategies were removed (recoverable from git tag `legacy-v1`) because their edge came from tuning on a single 2-year bull-market window. Read `docs/adr/0001-rebuild-strategy-layer-validation-first.md` before any strategy work. It fixes the Acceptance Gate, the Bake-off Candidates (C1 H4 Donchian trend, C2 session opening-range breakout, C4 stripped SMC), and the build order. Use the vocabulary in `GLOSSARY.md` (Edge, Out-of-sample, Final Holdout, Candidate, Complexity Budget, Shared Parameter Set, Kill-switch...).
 
-Build order (ADR 0001): ~~1. tag + remove legacy~~ → 2. Dukascopy data pipeline + Cost Stress + gap fills → 3. walk-forward Acceptance Gate harness → 4. Candidates C1, C2, C4 → 5. Bake-off + Final Holdout (once) → 6. Telegram inbound commands + Kill-switch → 7. Forward Test on demo.
+Build order (ADR 0001): ~~1. tag + remove legacy~~ → ~~2. Dukascopy data pipeline + Cost Stress + gap fills~~ → ~~3. walk-forward Acceptance Gate harness~~ → 4. Candidates C1, C2, C4 → 5. Bake-off + Final Holdout (once) → 6. Telegram inbound commands + Kill-switch → 7. Forward Test on demo.
 
 ## Commands
 
@@ -17,7 +17,20 @@ Build order (ADR 0001): ~~1. tag + remove legacy~~ → 2. Dukascopy data pipelin
 pip install MetaTrader5 pandas numpy certifi
 ```
 
-There is currently no runnable live loop or backtest. Both are rebuilt in steps 2–3 and 6 above. There is no test suite, linter, or build step yet.
+```bash
+# Data (Dukascopy M1 → cache; ~1,300 files/hour because the server throttles; resumable)
+python -m datafeed.dukascopy --symbol XAUUSDm
+python -m datafeed.bars --symbol XAUUSDm          # build M15/H1/H4/D1 cache
+python -m datafeed.crosscheck --symbol XAUUSDm    # vs Exness MT5, Jul 2024–Sep 2025 only
+
+# Harness self-check — run after ANY change to backtest/, risk.manage_step, config costs
+python -m backtest.selftest
+
+# Walk-forward + Acceptance Gate for a Candidate in strategy/candidates/<name>.py (exports CANDIDATE)
+python -m backtest.walkforward --candidate c1_donchian
+```
+
+There is no live loop yet (step 6). `backtest/selftest.py` is the test suite (no pytest dependency).
 
 Packages cross-import each other, so run everything with `python -m` from the repo root.
 
@@ -35,6 +48,13 @@ Packages cross-import each other, so run everything with `python -m` from the re
 - **`execution/journal.py`**: per-symbol CSV trade journal (`trades_<symbol>.csv`).
 - **`execution/notifier.py`**: Telegram send-only notifier (inbound commands come in step 6).
 - **`strategy/indicators.py`**: ATR, ADX, ATR percentile.
+
+## Research harness
+
+- **`datafeed/`**: `dukascopy.py` downloads M1 (single keep-alive connection, paced, since the server throttles). `bars.py` resamples to M15/H1/H4/D1, and **`load_bars()` hides the Final Holdout (bars ending after 2025-10-01) unless `include_holdout=True`.** `crosscheck.py` compares against Exness.
+- **`strategy/candidate.py`**: the `Candidate` contract. `signals(bars, **params)` is vectorised and must be causal (row i uses bars ≤ i). The engine acts on it from bar i+1. The constructor enforces the ≤ 4-parameter Complexity Budget.
+- **`backtest/engine.py`**: bar replay in R units (risk 1 unit per trade). Conservative fills: SL before TP, gap past SL fills at open, stop entries gap to open, no TP on a pending-order fill bar. Exits go through `risk.manage_step`.
+- **`backtest/walkforward.py`**: causality check (`assert_causal`) and data-coverage check, then grid × symbols simulated once, rolling 3y→1y windows with t-stat parameter selection, stitched OOS, Acceptance Gate. The gate constants are fixed: **don't change them to let a Candidate pass.**
 
 ## Critical conventions
 

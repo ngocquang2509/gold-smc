@@ -17,6 +17,7 @@ class TradingConfig:
     # ── Symbol & scale giá ───────────────────────────────
     symbol: str = "XAUUSDm"         # Một số broker dùng "GOLD", "XAUUSDm"...
     price_digits: int = 2           # Số chữ số làm tròn entry/SL/TP (vàng=2, forex=5)
+    contract_size: float = 100.0    # Đơn vị/lot: vàng 100 oz, forex 100_000
 
     # ── Chi phí giao dịch (đơn vị GIÁ theo scale của symbol) ──
     # Backtest trừ các phí này vào PnL từng lần khớp (kể cả partial, theo tỉ lệ lot).
@@ -73,6 +74,7 @@ EURUSD = TradingConfig(
     symbol="EURUSDm",
     magic_number=20260724,          # magic RIÊNG — không đụng lệnh symbol khác
     price_digits=5,
+    contract_size=100_000,
     # đo 2026-07-23
     spread_points=0.00008,          # median 8 points (0.8 pip) phiên NY 13–18
     commission_per_lot=0.0,
@@ -84,6 +86,7 @@ GBPUSD = TradingConfig(
     symbol="GBPUSDm",
     magic_number=20260725,
     price_digits=5,
+    contract_size=100_000,
     # đo 2026-07-30
     spread_points=0.00010,          # median 10 points (1 pip)
     commission_per_lot=0.0,
@@ -104,6 +107,23 @@ _ALIASES = {
     "eur": "EURUSDm", "eurusd": "EURUSDm",
     "gbp": "GBPUSDm", "gbpusd": "GBPUSDm",
 }
+
+
+COST_STRESS = 1.5   # Mọi số liệu Acceptance Gate đo dưới chi phí ×1.5 (GLOSSARY: Cost Stress)
+
+
+def stressed(cfg: TradingConfig, factor: float = COST_STRESS) -> TradingConfig:
+    """Bản sao cfg với chi phí bị phóng đại ×factor. Chỉ phóng CHI PHÍ: swap dương
+    (broker trả tiền cho mình) giữ nguyên — stress không được làm lợi nhuận đẹp hơn."""
+    def worse(swap: float) -> float:
+        return swap * factor if swap < 0 else swap
+    return replace(
+        cfg,
+        spread_points=cfg.spread_points * factor,
+        commission_per_lot=cfg.commission_per_lot * factor,
+        swap_long_per_lot=worse(cfg.swap_long_per_lot),
+        swap_short_per_lot=worse(cfg.swap_short_per_lot),
+    )
 
 
 def get_config(name: str) -> "TradingConfig":

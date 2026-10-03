@@ -8,3 +8,8 @@ __pycache__/
 # Output backtest (tạo lại mỗi lần chạy)
 *_equity.csv
 *backtest_trades.csv
+
+# Dữ liệu Dukascopy tải về + bar resample (build lại được từ cache)
+data/dukascopy/
+data/bars/
+reports/

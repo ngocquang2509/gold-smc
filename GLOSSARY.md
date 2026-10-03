@@ -19,10 +19,10 @@ Historical data the strategy (including its parameters) never saw during design 
 _Avoid_: test set, validation period, H2
 
 **Walk-forward Window**:
-One in-sample tuning slice followed by the out-of-sample slice right after it. The strategy is judged on the chain of these out-of-sample slices.
+One 3-year in-sample slice followed by the 1-year out-of-sample slice right after it. In each window the parameters with the best in-sample t-stat of trade R (all symbols pooled) are carried into the out-of-sample year. The strategy is judged on the chain of these out-of-sample slices.
 
 **Acceptance Gate**:
-The fixed bar a strategy must clear before it may trade real money: out-of-sample PF ≥ 1.25, max drawdown ≤ 15%, profitable in ≥ 70% of Walk-forward Windows, ≥ 200 out-of-sample trades, and then a pass on the Final Holdout. All figures are net of costs. Win rate and return are reported, not gated.
+The fixed bar a strategy must clear before it may trade real money: out-of-sample PF ≥ 1.25, max drawdown ≤ 15% at the 1%-per-trade risk ceiling, profitable in ≥ 70% of Walk-forward Windows, ≥ 200 out-of-sample trades (all symbols pooled), and then a pass on the Final Holdout. All figures are net of Cost Stress. Win rate and return are reported, not gated.
 _Avoid_: target, KPI
 
 **Final Holdout**:
