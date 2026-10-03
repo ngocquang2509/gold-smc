@@ -26,7 +26,7 @@ The fixed bar a strategy must clear before it may trade real money: out-of-sampl
 _Avoid_: target, KPI
 
 **Final Holdout**:
-The most recent 12 months of history, kept unseen until a Candidate has passed the walk-forward part of the Acceptance Gate. It is evaluated exactly once. A failure there rejects the Candidate; it is never re-tuned against it.
+The most recent 12 months of history, kept unseen until a Candidate has passed the walk-forward part of the Acceptance Gate. It is evaluated exactly once, with the parameters chosen on the 3 years just before it. It passes at PF ≥ 1.0 and max drawdown ≤ 15% at 1% risk, net of Cost Stress: it checks that the Edge is still alive, since 12 months is too small a sample to measure it. A failure there rejects the Candidate; it is never re-tuned against it.
 _Avoid_: test period, forward test
 
 **Candidate**:

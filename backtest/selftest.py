@@ -310,6 +310,87 @@ def test_c4():
     check("đúng 4 tham số", len(C4.param_grid) == 4)
 
 
+def _refused(fn, *a, **kw) -> bool:
+    try:
+        fn(*a, **kw)
+    except SystemExit:
+        return True
+    return False
+
+
+def test_holdout():
+    import json
+    import tempfile
+    from pathlib import Path
+    from backtest import holdout as ho
+    from datafeed.bars import HOLDOUT_START
+    print("Final Holdout (1 lần):")
+    tr = lambda rs: pd.DataFrame({"r": rs, "symbol": "X",
+                                  "exit_time": pd.date_range("2025-10-02", periods=len(rs), freq="D")})
+    check("PF = 1.0, DD nhỏ → qua (ngưỡng PF ≥ 1.0)", ho.holdout_verdict(tr([2.0, -1.0, -1.0]))["passed"])
+    check("PF < 1 → trượt", not ho.holdout_verdict(tr([1.0, -1.0, -1.0]))["passed"])
+    check("DD > 15% → trượt dù PF cao", not ho.holdout_verdict(tr([-17.0, 40.0]))["passed"])
+    check("0 lệnh → trượt", not ho.holdout_verdict(tr([]))["passed"])
+
+    cand = _MA("ma_test", "H1", {"n": [5, 10]})
+    real_run, real_sim = ho.wf.run, ho.simulate
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        p = ho.claim("x", {"a": 1}, d)
+        check("claim tạo marker", json.loads(p.read_text(encoding="utf-8"))["a"] == 1)
+        check("claim lần 2 bị từ chối, marker cũ giữ nguyên",
+              _refused(ho.claim, "x", {"a": 2}, d) and json.loads(p.read_text(encoding="utf-8"))["a"] == 1)
+
+        def boom(*a, **k):
+            raise AssertionError("không được chạy walk-forward khi holdout đã dùng")
+        ho.wf.run = boom
+        ho.claim("ma_test", {}, d)
+        check("marker đã có → từ chối TRƯỚC khi chạy walk-forward",
+              _refused(ho.preflight, cand, ["X"], marker_dir=d, require_clean=False))
+        (d / "ma_test.json").unlink()
+
+        ho.wf.run = lambda *a, **k: {"passed": False}
+        check("chưa qua walk-forward → từ chối",
+              _refused(ho.preflight, cand, ["X"], marker_dir=d, require_clean=False))
+
+        # Đường chạy đủ trên dữ liệu tổng hợp 2022-09 → 2026-09 (H1).
+        rng = np.random.default_rng(7)
+        idx = pd.date_range("2022-09-01", "2026-09-30 23:00", freq="1h")
+        c = 100 + rng.standard_normal(len(idx)).cumsum() * 0.1
+        bars = pd.DataFrame({"open": c, "high": c + 0.2, "low": c - 0.2, "close": c}, index=idx)
+        is_trades = pd.DataFrame({"entry_time": pd.date_range("2023-01-01", periods=40, freq="7D"),
+                                  "r": np.r_[[1.0, -0.5] * 20]})
+        ho.wf.run = lambda *a, **k: {"passed": True, "combos": [{"n": 5}, {"n": 10}],
+                                     "by_combo": [is_trades.iloc[:5], is_trades],
+                                     "summary": {"pf": 1.5}}
+        real_load = ho.load_bars
+        ho.load_bars = lambda s, tf, include_holdout=False: bars
+        try:
+            ctx = ho.preflight(cand, ["XAUUSDm"], marker_dir=d, require_clean=False)
+            check("tham số chọn trên 3 năm trước holdout (bộ đủ ≥30 lệnh)", ctx["params"] == {"n": 10})
+
+            ho.simulate = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("crash"))
+            try:
+                ho.spend(cand, ["XAUUSDm"], ctx, marker_dir=d)
+            except RuntimeError:
+                pass
+            m = json.loads((d / "ma_test.json").read_text(encoding="utf-8"))
+            check("crash sau khi claim → marker 'started' vẫn còn (holdout coi như đã dùng)",
+                  m["status"] == "started" and m["params"] == {"n": 10})
+            check("chạy lại sau crash bị từ chối",
+                  _refused(ho.preflight, cand, ["XAUUSDm"], marker_dir=d, require_clean=False))
+
+            (d / "ma_test.json").unlink()
+            ho.simulate = real_sim
+            v = ho.spend(cand, ["XAUUSDm"], ctx, marker_dir=d)
+            m = json.loads((d / "ma_test.json").read_text(encoding="utf-8"))
+            check("chạy đủ → marker 'done' kèm verdict, chỉ lệnh vào từ HOLDOUT_START",
+                  m["status"] == "done" and m["verdict"]["passed"] == v["passed"]
+                  and v["trades"] > 0 and pd.Timestamp(m["first_entry"]) >= HOLDOUT_START)
+        finally:
+            ho.wf.run, ho.simulate, ho.load_bars = real_run, real_sim, real_load
+
+
 if __name__ == "__main__":
     import sys
     sys.stdout.reconfigure(encoding="utf-8")   # console Windows mặc định cp1252
@@ -318,4 +399,5 @@ if __name__ == "__main__":
     test_c1()
     test_c2()
     test_c4()
+    test_holdout()
     print("TẤT CẢ OK")

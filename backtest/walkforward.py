@@ -130,6 +130,17 @@ def _combos(grid: dict) -> list[dict]:
     return [dict(zip(keys, vals)) for vals in itertools.product(*(grid[k] for k in keys))]
 
 
+def pick_best(by_combo: list[pd.DataFrame], is_start, is_end) -> tuple[int | None, float]:
+    """Chỉ số bộ tham số có t-stat R cao nhất trên in-sample [is_start, is_end) — gộp mọi
+    symbol, cần ≥ MIN_IS_TRADES lệnh. Dùng chung cho walk-forward và Final Holdout."""
+    best, best_score = None, -math.inf
+    for ci, tr in enumerate(by_combo):
+        ins = tr[(tr["entry_time"] >= is_start) & (tr["entry_time"] < is_end)]["r"]
+        if len(ins) >= MIN_IS_TRADES and t_stat(ins) > best_score:
+            best, best_score = ci, t_stat(ins)
+    return best, best_score
+
+
 def run(cand: Candidate, symbols=SYMBOLS, stress: bool = True, verbose: bool = True) -> dict:
     bars = {s: load_bars(s, cand.timeframe) for s in symbols}
     for s, b in bars.items():
@@ -154,11 +165,7 @@ def run(cand: Candidate, symbols=SYMBOLS, stress: bool = True, verbose: bool = T
     data_end = min(HOLDOUT_START, max(b.index[-1] for b in bars.values()) + pd.Timedelta(seconds=1))
     rows, oos_parts = [], []
     for is_start, oos_start, oos_end in windows(data_end):
-        best, best_score = None, -math.inf
-        for ci, tr in enumerate(by_combo):
-            ins = tr[(tr["entry_time"] >= is_start) & (tr["entry_time"] < oos_start)]["r"]
-            if len(ins) >= MIN_IS_TRADES and t_stat(ins) > best_score:
-                best, best_score = ci, t_stat(ins)
+        best, best_score = pick_best(by_combo, is_start, oos_start)
         if best is None:
             oos = by_combo[0].iloc[0:0]
         else:
@@ -199,6 +206,7 @@ def run(cand: Candidate, symbols=SYMBOLS, stress: bool = True, verbose: bool = T
         # Không stress chi phí thì không bao giờ tính là qua gate.
         "gate": checks, "passed": stress and all(checks.values()),
         "oos_trades": oos_all,
+        "combos": combos, "by_combo": by_combo,   # để chọn tham số cho Final Holdout (không lưu)
     }
 
 
@@ -216,7 +224,7 @@ def save_report(res: dict) -> Path:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     base = REPORT_DIR / f"{res['candidate']}-{stamp}"
     res["oos_trades"].to_csv(base.with_suffix(".trades.csv"), index=False)
-    meta = {k: v for k, v in res.items() if k != "oos_trades"}
+    meta = {k: v for k, v in res.items() if k not in ("oos_trades", "combos", "by_combo")}
     base.with_suffix(".json").write_text(json.dumps(meta, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     return base
 
@@ -224,6 +232,7 @@ def save_report(res: dict) -> Path:
 def main():
     import sys
     sys.stdout.reconfigure(encoding="utf-8")   # console Windows mặc định cp1252
+    sys.stderr.reconfigure(encoding="utf-8")   # thông báo SystemExit đi qua stderr
     p = argparse.ArgumentParser(description="Walk-forward + Acceptance Gate cho một Candidate")
     p.add_argument("--candidate", required=True, help="module trong strategy/candidates/, vd c1_donchian")
     p.add_argument("--symbols", default=",".join(SYMBOLS))
