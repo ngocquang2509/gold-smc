@@ -4,3 +4,7 @@ scalp_bot.log
 __pycache__/
 *.pyc
 .worktrees/
+
+# Output backtest (tạo lại mỗi lần chạy)
+*_equity.csv
+*backtest_trades.csv

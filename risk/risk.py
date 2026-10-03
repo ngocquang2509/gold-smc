@@ -1,6 +1,6 @@
 """
 Quản lý vốn & rủi ro:
-- Position sizing theo % rủi ro cố định (1%/lệnh).
+- Position sizing theo % rủi ro cố định (≤1%/lệnh — xem ADR 0001).
 - Kiểm tra R:R tối thiểu trước khi vào lệnh.
 - Daily loss limit + portfolio heat cap.
 - ENGINE QUẢN LÝ LỆNH DÙNG CHUNG (breakeven + partial + mô phỏng SL/TP):
@@ -20,8 +20,7 @@ class TradePlan:
     rr: float
     risk_amount: float
     reason: str
-    sweep_level: float | None = None   # Mức thanh khoản đã quét (để chống re-entry)
-    order_kind: str = "limit"          # #4: "limit" (nghỉ tại biên vùng) | "market"
+    order_kind: str = "market"         # "market" | "limit" (pending tại giá entry)
 
 
 def calc_lot_size(balance: float, risk_pct: float, entry: float, sl: float,

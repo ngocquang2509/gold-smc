@@ -1,91 +1,25 @@
-# Gold SMC Bot — XAUUSD trên MetaTrader 5
+# Gold SMC Bot — đang xây lại (rebuild)
 
-Bot giao dịch vàng theo Smart Money Concepts (SMC), đa khung thời gian H4 → M15, quản lý vốn theo R:R với rủi ro cố định 1%/lệnh.
+Bot giao dịch tự động trên MetaTrader 5 (Exness) cho XAUUSDm / EURUSDm / GBPUSDm, báo cáo qua Telegram.
 
-## ⚠️ Cảnh báo quan trọng
+## Trạng thái
 
-- Thư viện `MetaTrader5` cho Python **chỉ chạy trên Windows** (máy có cài terminal MT5 và đang đăng nhập).
-- **Luôn chạy demo trước.** Mặc định `dry_run=True` — bot chỉ log tín hiệu, không đặt lệnh. Backtest → dry run → demo account → (cân nhắc kỹ) live.
-- Backtest engine ở đây là mô phỏng đơn giản (không tính spread/commission/slippage đầy đủ). Kết quả backtest tốt **không đảm bảo** lợi nhuận thực tế. Giao dịch vàng có đòn bẩy rủi ro rất cao.
+Tầng chiến lược cũ (SMC H4→M15 + scalp M5) **đã gỡ**: edge của nó đến từ việc tune trên đúng 1 cửa sổ 2 năm vàng tăng mạnh, và kết quả live không đạt. Code cũ vẫn lấy lại được qua tag git `legacy-v1`.
+
+Chiến lược mới được chọn qua một **Bake-off** các Candidate đơn giản (≤ 4 tham số, dùng chung cho mọi symbol) so với một **Acceptance Gate** cố định:
+out-of-sample PF ≥ 1.25, max DD ≤ 15%, ≥ 70% cửa sổ walk-forward có lãi, ≥ 200 lệnh OOS, tính dưới chi phí ×1.5, rồi qua **Final Holdout** 12 tháng (chạy đúng 1 lần).
+
+- Quyết định & thứ tự xây dựng: [`docs/adr/0001-rebuild-strategy-layer-validation-first.md`](docs/adr/0001-rebuild-strategy-layer-validation-first.md)
+- Thuật ngữ: [`GLOSSARY.md`](GLOSSARY.md)
+
+## ⚠️ Cảnh báo
+
+- Thư viện `MetaTrader5` cho Python **chỉ chạy trên Windows** (terminal MT5 đang đăng nhập, bật "Algo Trading").
+- Mặc định `dry_run=True`. Không giao dịch tiền thật cho tới khi một Candidate qua Acceptance Gate **và** Forward Test trên demo.
+- Telegram: đặt biến môi trường `TELEGRAM_TOKEN` / `TELEGRAM_CHAT_ID`; không ghi secret vào code.
 
 ## Cài đặt
 
 ```bash
-pip install MetaTrader5 pandas numpy
+pip install MetaTrader5 pandas numpy certifi
 ```
-
-Mở MT5, đăng nhập tài khoản **demo**, bật "Algo Trading". Kiểm tra tên symbol vàng của broker (XAUUSD / GOLD / XAUUSDm...) và sửa `symbol` trong `config/config.py` nếu cần.
-
-## Cấu trúc dự án
-
-Tổ chức theo vai trò kỹ thuật, mỗi thư mục là 1 package (chạy bằng `python -m` từ gốc dự án):
-
-```
-gold-smc-bot/
-├── config/
-│   └── config.py       # Mọi tham số tinh chỉnh
-├── strategy/
-│   ├── strategy.py      # Logic tổng hợp tín hiệu
-│   └── smc/
-│       ├── structure.py   # Swing, BOS, CHoCH, trend HTF
-│       ├── order_blocks.py# Order Block + kiểm tra imbalance
-│       ├── fvg.py         # Fair Value Gap
-│       └── liquidity.py   # Liquidity pools, sweep, TP theo thanh khoản
-├── risk/
-│   └── risk.py          # Position sizing, R:R, daily loss, heat cap
-├── backtest/
-│   └── backtest.py       # Engine backtest bar-by-bar
-└── execution/
-    ├── main.py           # Vòng lặp live/demo
-    └── mt5_client.py      # Wrapper MetaTrader5 (kết nối, dữ liệu, lệnh)
-```
-
-## Logic giao dịch
-
-1. **H4** — xác định xu hướng bằng market structure (chuỗi BOS/CHoCH). Trend `neutral` → đứng ngoài.
-2. **M15** — chỉ tìm lệnh thuận hướng H4:
-   - Chờ **liquidity sweep** ngược hướng (quét đáy trước khi buy, quét đỉnh trước khi sell).
-   - Sau sweep, chờ **CHoCH/BOS** trên M15 quay về hướng H4 (xác nhận).
-   - Entry khi giá **retest OB hoặc FVG** hình thành từ cú xác nhận.
-3. **SL** — ngoài biên OB/mức sweep + buffer 1.5 USD.
-4. **TP** — pool thanh khoản đối diện gần nhất; nếu không đủ R:R ≥ 2 thì dùng TP cố định 2.5R.
-5. **Quản lý vốn**:
-   - 1.5% tài khoản/lệnh, lot tự tính theo khoảng SL.
-   - Chỉ vào lệnh khi R:R ≥ 2.
-   - Dời SL về hòa vốn tại 1R; chốt 50% tại 1.5R.
-   - Dừng trong ngày nếu lỗ 3%; heat cap tổng 6%.
-
-## Sử dụng
-
-### Backtest
-
-```bash
-# Tải dữ liệu trực tiếp từ MT5 (chạy trên Windows):
-python -m backtest.backtest --from-mt5 --bars 5000 --balance 10000
-
-# Hoặc từ CSV (cột: time,open,high,low,close):
-python -m backtest.backtest --csv-ltf data/xauusd_m15.csv --csv-htf data/xauusd_h4.csv
-```
-
-Kết quả: winrate, PnL, max drawdown + file `backtest_trades.csv`, `backtest_equity.csv`.
-
-### Chạy demo
-
-```bash
-python -m execution.main
-```
-
-Ban đầu để `dry_run=True` vài ngày để quan sát tín hiệu trong `bot.log`. Khi hài lòng, đổi `dry_run=False` trong `config/config.py` — bot đặt lệnh trên tài khoản demo đang đăng nhập.
-
-## Tinh chỉnh đáng thử trong `config/config.py`
-
-- `require_sweep=False` — nới lỏng, nhiều tín hiệu hơn (chất lượng thấp hơn).
-- `entry_mode` — thử `"ob_only"` vs `"fvg_only"` để xem vùng nào cho winrate tốt hơn với vàng.
-- `sessions` — giờ theo **server MT5** (thường GMT+2/+3), khác giờ Việt Nam. Kiểm tra giờ server trong tab Market Watch và điều chỉnh cho khớp phiên London/NY.
-- `fvg_min_size_points` — vàng biến động mạnh, tăng lên 1.0–2.0 để lọc nhiễu.
-
-## Hướng mở rộng
-
-- Gắn Telegram bot báo tín hiệu — chỉ cần thêm 1 hàm gửi message tại điểm log "🎯 TÍN HIỆU".
-- Ghi journal lệnh ra CSV/SQLite để thống kê theo setup (OB vs FVG, có sweep vs không).
-- Walk-forward test: chia dữ liệu thành nhiều giai đoạn để tránh overfit tham số.
