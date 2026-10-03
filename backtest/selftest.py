@@ -432,6 +432,160 @@ def test_bakeoff():
         check("tất cả trượt (không lỗi) → 0/N là kết quả hợp lệ", "0/1" in bk.conclusion(rows))
 
 
+def test_killswitch():
+    import json
+    import tempfile
+    from pathlib import Path
+    from risk.killswitch import KillSwitch, limits_from_holdout
+    print("Kill-switch:")
+    t = lambda h: pd.Timestamp("2027-01-01") + pd.Timedelta(hours=h)
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        path = d / "control.json"
+        ks = KillSwitch(path, {"c1": 10.0, "c2": 4.0}, now=lambda: t(0))
+        check("mới khởi tạo → được vào lệnh", ks.can_enter("c1") and ks.can_enter("c2"))
+
+        dd_trades = [(t(1), -8.0), (t(2), -8.0)]          # ~15.4% DD @1% ≥ 1.5 × 10%
+        reason = ks.evaluate("c1", dd_trades)
+        check("DD ≥ 1.5× OOS DD → dừng, có lý do", reason is not None and "DD" in reason and not ks.can_enter("c1"))
+        check("đã dừng → không báo lại lần 2", ks.evaluate("c1", dd_trades) is None)
+        check("c2 không bị ảnh hưởng (per Strategy)", ks.can_enter("c2"))
+        check("trạng thái dừng sống qua restart",
+              not KillSwitch(path, {"c1": 10.0, "c2": 4.0}, now=lambda: t(3)).can_enter("c1"))
+
+        ks.now = lambda: t(5)
+        ks.resume("c1")
+        check("/resume → tái kích hoạt từ đầu: lệnh cũ không tính, không dừng lại ngay",
+              ks.can_enter("c1") and ks.evaluate("c1", dd_trades) is None)
+
+        pf_trades = [(t(10 + i), 1.0 if i % 5 < 2 else -1.0) for i in range(50)]   # PF 20/30
+        check("49 lệnh PF thấp → chưa xét PF", ks.evaluate("c1", pf_trades[:49]) is None)
+        r = ks.evaluate("c1", pf_trades)
+        check("50 lệnh PF < 0.9 → dừng", r is not None and "PF" in r and not ks.can_enter("c1"))
+
+        armed_c2 = ks.status("c2")["armed_at"]
+        ks.pause()
+        check("/pause → mọi Strategy ngừng vào lệnh", not ks.can_enter("c1") and not ks.can_enter("c2"))
+        ks.now = lambda: t(100)
+        ks.resume()
+        check("/resume → mở lại hết; Strategy chỉ bị pause giữ nguyên mốc DD",
+              ks.can_enter("c1") and ks.can_enter("c2") and ks.status("c2")["armed_at"] == armed_c2
+              and ks.status("c1")["armed_at"] == str(t(100)))
+        ks.pause("c2")
+        check("/pause c2 → chỉ c2", ks.can_enter("c1") and not ks.can_enter("c2"))
+        try:
+            ks.pause("nope")
+            unknown = False
+        except KeyError:
+            unknown = True
+        check("Strategy lạ → KeyError", unknown)
+
+        hd = d / "holdout"
+        hd.mkdir()
+        (hd / "c1.json").write_text(json.dumps({"status": "done", "verdict": {"passed": True},
+                                                "walkforward": {"max_dd_pct": 9.5}}), encoding="utf-8")
+        (hd / "c2.json").write_text(json.dumps({"status": "done", "verdict": {"passed": False},
+                                                "walkforward": {"max_dd_pct": 5.0}}), encoding="utf-8")
+        check("giới hạn lấy từ marker holdout đã QUA", limits_from_holdout(["c1"], hd) == {"c1": 9.5})
+        check("holdout trượt / chưa có → không được chạy",
+              _refused(limits_from_holdout, ["c2"], hd) and _refused(limits_from_holdout, ["c4"], hd))
+
+
+def test_telegram_control():
+    import tempfile
+    from pathlib import Path
+    from execution.telegram_control import TelegramControl
+    from risk.killswitch import KillSwitch
+    print("Telegram control:")
+    now = 1_800_000_000
+    OWNER = 111
+
+    def upd(uid, text, chat=OWNER, ctype="private", age=0):
+        return {"update_id": uid, "message": {"chat": {"id": chat, "type": ctype}, "from": {"id": chat},
+                                              "date": now - age, "text": text}}
+
+    class FakeApi:
+        def __init__(self):
+            self.queue, self.sent, self.offsets = [], [], []
+
+        def __call__(self, method, payload):
+            if method == "getUpdates":
+                self.offsets.append(payload.get("offset"))
+                out, self.queue = self.queue, []
+                return {"ok": True, "result": out}
+            self.sent.append(payload)
+            return {"ok": True}
+
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        ks = KillSwitch(d / "control.json", {"c1": 10.0, "c2": 4.0})
+        api = FakeApi()
+        tc = TelegramControl(api, OWNER, ks, d / "tg.json", clock=lambda: now)
+
+        api.queue = [upd(1, "/pause", chat=999), upd(2, "/pause", chat=OWNER, ctype="group")]
+        tc.poll_once()
+        check("người lạ / group chat → bỏ qua, không trả lời", api.sent == [] and ks.can_enter("c1"))
+
+        api.queue = [upd(3, "/pause", age=600)]
+        tc.poll_once()
+        check("lệnh cũ > 5 phút → bỏ qua (không phát lại sau restart)", ks.can_enter("c1") and api.sent == [])
+
+        api.queue = [upd(4, "/pause")]
+        tc.poll_once()
+        check("/pause từ chủ → dừng hết, có trả lời cho chủ",
+              not ks.can_enter("c1") and not ks.can_enter("c2") and api.sent[-1]["chat_id"] == OWNER)
+        api.queue = [upd(5, "/resume c1")]
+        tc.poll_once()
+        check("/resume c1 → chỉ c1", ks.can_enter("c1") and not ks.can_enter("c2"))
+        api.queue = [upd(6, "/status")]
+        tc.poll_once()
+        txt = api.sent[-1]["text"]
+        check("/status liệt kê từng Strategy kèm DD/PF", "c1" in txt and "c2" in txt and "DD" in txt and "PF" in txt)
+        api.queue = [upd(7, "/buy XAUUSDm 1")]
+        tc.poll_once()
+        check("lệnh lạ (vd đặt lệnh) → chỉ trả trợ giúp, không có lệnh giao dịch",
+              "/status" in api.sent[-1]["text"] and ks.can_enter("c1") and not ks.can_enter("c2"))
+
+        check("offset tăng dần", api.offsets[-1] == 7)
+        tc2 = TelegramControl(api, OWNER, ks, d / "tg.json", clock=lambda: now)
+        tc2.poll_once()
+        check("offset lưu đĩa, sống qua restart", api.offsets[-1] == 8)
+
+        def broken(method, payload):
+            raise OSError("mạng rớt")
+        check("lỗi mạng → không crash vòng lặp",
+              TelegramControl(broken, OWNER, ks, d / "tg2.json", clock=lambda: now).poll_once() == [])
+
+
+def test_journal_and_alert():
+    import tempfile
+    from pathlib import Path
+    from datetime import datetime
+    from execution.journal import TradeJournal
+    from execution.notifier import TelegramNotifier
+    print("Journal theo Strategy + cảnh báo:")
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "trades_X.csv"
+        p.write_text("ticket,symbol,mode,created,direction,entry,sl,tp,lot,rr,risk_amount,reason,"
+                     "result,closed,close_price,profit\n1,X,live,2027-01-01T00:00:00,buy,1,0,2,0.1,2,10,"
+                     "old,success,2027-01-02T00:00:00,2,20\n", encoding="utf-8")
+        j = TradeJournal("X", str(p))
+        j.record_open(2, "buy", 1, 0, 2, 0.1, 2, 10.0, "r", strategy="c1")
+        j.record_open(3, "sell", 1, 2, 0, 0.1, 2, 10.0, "r", strategy="c1")
+        j.record_open(4, "sell", 1, 2, 0, 0.1, 2, 10.0, "r", strategy="c2")
+        j.record_close(2, "failed", close_price=0, profit=-10.0, closed=datetime(2027, 1, 3))
+        j.record_close(4, "success", close_price=0, profit=15.0, closed=datetime(2027, 1, 3))
+        check("CSV cũ (không cột strategy) vẫn đọc được", TradeJournal("X", str(p)).has(1))
+        check("closed_r theo Strategy: R = profit / risk_amount, bỏ lệnh còn mở",
+              [r for _, r in j.closed_r("c1")] == [-1.0] and [r for _, r in j.closed_r("c2")] == [1.5])
+
+    sent = []
+    n = TelegramNotifier("t", "1")
+    n._send = sent.append
+    n.notify_alert("c1", "PF 50 lệnh gần nhất 0.80 < 0.9")
+    check("cảnh báo Kill-switch escape HTML ('<' không làm hỏng tin)", "&lt; 0.9" in sent[0] and "c1" in sent[0])
+
+
 if __name__ == "__main__":
     import sys
     sys.stdout.reconfigure(encoding="utf-8")   # console Windows mặc định cp1252
@@ -442,4 +596,7 @@ if __name__ == "__main__":
     test_c4()
     test_holdout()
     test_bakeoff()
+    test_killswitch()
+    test_telegram_control()
+    test_journal_and_alert()
     print("TẤT CẢ OK")

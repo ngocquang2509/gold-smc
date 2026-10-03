@@ -13,3 +13,6 @@ __pycache__/
 data/dukascopy/
 data/bars/
 reports/
+
+# Trạng thái runtime live (Kill-switch, offset Telegram) — không commit
+state/
