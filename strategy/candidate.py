@@ -17,6 +17,8 @@ Cột của DataFrame trả về (index trùng bars):
 Cột tùy chọn (để quản lý vị thế đang mở):
   trail_long / trail_short   mức SL trượt; engine chỉ dời SL theo hướng có lợi
   flat         True → đóng vị thế tại open bar kế (vd hết phiên)
+Cột tùy chọn (lệnh chờ 2 chân OCO, chân kia NGƯỢC hướng signal, cùng entry_type/expiry):
+  oco_price, oco_sl, oco_tp   NaN → không có chân thứ hai. Chân khớp trước hủy chân kia.
 """
 from dataclasses import dataclass, field
 

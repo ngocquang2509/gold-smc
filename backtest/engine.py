@@ -13,6 +13,9 @@ Quy tắc khớp (bảo thủ, ghi nhận để không ai "sửa" cho đẹp s�
   - Bar khớp lệnh chờ: chỉ xét SL (không xét TP) — không biết thứ tự trong bar.
   - Còn lại dùng risk.manage_step: SL trước TP, SL gap → khớp open (lỗ > 1R).
   - Mỗi symbol tối đa 1 vị thế + 1 lệnh chờ; tín hiệu mới trong lúc đó bị bỏ qua.
+  - OCO (cột oco_*): 2 chân lệnh chờ ngược hướng, chân khớp trước hủy chân kia. Cả 2
+    cùng chạm trong 1 bar → lấy chân gần open hơn (SL của nó thường là chân kia →
+    bị SL ngay trên bar khớp → -1R, tức tự động bảo thủ).
 """
 from dataclasses import replace
 
@@ -46,13 +49,15 @@ def simulate(bars: pd.DataFrame, sig: pd.DataFrame, cfg: TradingConfig,
     tr_long = sig["trail_long"].to_numpy(float) if "trail_long" in sig else None
     tr_short = sig["trail_short"].to_numpy(float) if "trail_short" in sig else None
     flat = sig["flat"].to_numpy(bool) if "flat" in sig else None
+    oco = (tuple(sig[k].to_numpy(float) for k in ("oco_price", "oco_sl", "oco_tp"))
+           if "oco_price" in sig else None)
     cs = cfg.contract_size
     n = len(t)
 
     trades: list[dict] = []
     pos: PositionState | None = None
     pos_rows: list[dict] = []
-    pending = None          # (direction, kind, price, sl, tp, expires_at_index)
+    pending = None          # (legs [(direction, price, sl, tp)], kind, expires_at_index)
     flat_next = False
     signal_idx = np.flatnonzero(s_sig != 0)
 
@@ -93,24 +98,32 @@ def simulate(bars: pd.DataFrame, sig: pd.DataFrame, cfg: TradingConfig,
                     continue
                 fill_bar_pending = False
             else:
-                pending = (direction, s_type[j], s_px[j], s_sl[j], s_tp[j], i + max(s_exp[j], 1))
+                legs = [(direction, s_px[j], s_sl[j], s_tp[j])]
+                if oco is not None and not np.isnan(oco[0][j]):
+                    legs.append(("sell" if direction == "buy" else "buy", oco[0][j], oco[1][j], oco[2][j]))
+                pending = (legs, s_type[j], i + max(s_exp[j], 1))
 
         fill_bar_pending = False
         if pending is not None:
-            direction, kind, px, sl, tp, expires = pending
+            legs, kind, expires = pending
             if i >= expires:
                 pending = None
                 continue
-            is_buy = direction == "buy"
-            if kind == "stop":
-                hit = h[i] >= px if is_buy else l[i] <= px
-                fill = (max(o[i], px) if is_buy else min(o[i], px))
-            else:
-                hit = l[i] <= px if is_buy else h[i] >= px
-                fill = px
-            if not hit:
+            hits = []
+            for direction, px, sl, tp in legs:
+                is_buy = direction == "buy"
+                if kind == "stop":
+                    hit = h[i] >= px if is_buy else l[i] <= px
+                    fill = (max(o[i], px) if is_buy else min(o[i], px))
+                else:
+                    hit = l[i] <= px if is_buy else h[i] >= px
+                    fill = px
+                if hit:
+                    hits.append((abs(fill - o[i]), direction, fill, sl, tp))
+            if not hits:
                 i += 1
                 continue
+            _, direction, fill, sl, tp = min(hits)
             pending = None
             pos = open_pos(direction, fill, sl, tp, i)
             pos_rows = []
