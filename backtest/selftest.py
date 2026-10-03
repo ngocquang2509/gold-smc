@@ -586,6 +586,211 @@ def test_journal_and_alert():
     check("cảnh báo Kill-switch escape HTML ('<' không làm hỏng tin)", "&lt; 0.9" in sent[0] and "c1" in sent[0])
 
 
+class _FakeBroker:
+    """Broker giả cho LiveRunner: bar theo chỉ số `k` (bar đang hình thành), giá cố định."""
+
+    def __init__(self, bars, px=100.0, lag=pd.Timedelta(seconds=30)):
+        self.bars, self.k, self.px, self.lag = bars, 10, px, lag
+        self.pos, self.orders, self.closed, self.calls = [], {}, {}, []
+        self.ticket = 100
+
+    def closed_bars(self, tf, n):
+        return self.bars.iloc[:self.k], self.bars.index[self.k]
+
+    def positions(self):
+        return list(self.pos)
+
+    def pending(self):
+        return list(self.orders)
+
+    def price(self, d):
+        return self.px
+
+    def now(self):
+        return self.bars.index[self.k] + self.lag
+
+    def balance(self):
+        return 10_000.0
+
+    def symbol_info(self):
+        return {"contract_size": 100.0, "volume_min": 0.01, "volume_step": 0.01, "volume_max": 100.0}
+
+    def _new(self):
+        self.ticket += 1
+        return self.ticket
+
+    def place_market(self, d, lot, sl, tp, comment):
+        from execution.live import Pos
+        t = self._new()
+        self.pos.append(Pos(t, d, self.px, sl, tp, lot))
+        self.calls.append(("market", d, lot, sl))
+        return t
+
+    def place_pending(self, d, kind, lot, price, sl, tp, expires, comment):
+        t = self._new()
+        self.orders[t] = (d, kind, lot, price, sl, tp, expires)
+        self.calls.append(("pending", d, kind, price))
+        return t
+
+    def fill(self, t):
+        from execution.live import Pos
+        d, _, lot, price, sl, tp, _ = self.orders.pop(t)
+        self.pos.append(Pos(t, d, price, sl, tp, lot))
+
+    def cancel(self, t):
+        self.calls.append(("cancel", t))
+        return self.orders.pop(t, None) is not None
+
+    def modify_sl(self, t, sl):
+        self.calls.append(("modify", t, sl))
+        self.pos = [replace(p, sl=sl) if p.ticket == t else p for p in self.pos]
+        return True
+
+    def close(self, t, profit=None):
+        p = next(p for p in self.pos if p.ticket == t)
+        pnl = (self.px - p.entry if p.direction == "buy" else p.entry - self.px) * p.lot * 100
+        self.pos.remove(p)
+        self.closed[t] = ("closed", self.px, round(pnl if profit is None else profit, 2))
+        self.calls.append(("close", t))
+        return True
+
+    def close_info(self, t):
+        return self.closed.get(t)
+
+
+class _Notes:
+    def __init__(self):
+        self.alerts, self.opened, self.closed = [], [], []
+
+    def notify_alert(self, name, reason):
+        self.alerts.append((name, reason))
+
+    def notify_opened(self, sym, plan):
+        self.opened.append(plan)
+
+    def notify_closed(self, sym, rec, result, profit):
+        self.closed.append((rec["ticket"], result, profit))
+
+
+def test_live_loop():
+    print("live loop (broker giả):")
+    import tempfile
+    from pathlib import Path
+    from execution.journal import TradeJournal
+    from execution.live import LiveRunner, Slot, pending_expiry, slot_magic
+    from risk.killswitch import KillSwitch
+
+    bars = _bars([[100, 101, 99, 100]] * 40)
+    t = bars.index
+    nan = float("nan")
+
+    class Scripted(Candidate):
+        table: dict = None
+
+        def signals(self, b, **kw):
+            s = empty_signals(b.index)
+            for col in ("oco_price", "oco_sl", "oco_tp", "trail_long", "trail_short"):
+                s[col] = nan
+            s["flat"] = False
+            for at, vals in self.table.items():
+                if at in s.index:
+                    for k, v in vals.items():
+                        s.loc[at, k] = v
+            return s
+
+    def rig(table, execute=True, lag=pd.Timedelta(seconds=30), oos_dd=10.0):
+        tmp = Path(tempfile.mkdtemp())
+        cand = Scripted(name="scripted", timeframe="H1")
+        cand.table = table
+        br = _FakeBroker(bars, lag=lag)
+        notes = _Notes()
+        # Đồng hồ cố định: nhật ký cắt giờ đóng về giây, armed_at "bây giờ" có micro giây
+        # → lệnh đóng cùng giây với lúc arm sẽ bị coi là TRƯỚC mốc.
+        ks = KillSwitch(tmp / "ks.json", {"scripted": oos_dd}, now=lambda: pd.Timestamp("2020-01-01"))
+        slot = Slot(cand, {}, get_config("gold"), br, TradeJournal("XAUUSDm", tmp / "j.csv"), state_dir=tmp)
+        return LiveRunner([slot], ks, notes, execute=execute), br, notes, ks, slot
+
+    # Market → trail → trail lùi bị bỏ → trail vượt giá thì đóng.
+    run, br, notes, ks, slot = rig({t[9]: {"signal": 1, "sl": 95.0},
+                                    t[10]: {"trail_long": 97.0}, t[11]: {"trail_long": 96.0},
+                                    t[12]: {"trail_long": 101.0}})
+    run.step()
+    check("market: vào đúng 1 lệnh, lot = 0.5% × 10k / (5 × 100) = 0.1",
+          br.calls == [("market", "buy", 0.1, 95.0)])
+    run.step()
+    check("cùng bar không xử lý lại (không vào lệnh thứ 2)", len(br.calls) == 1)
+    check("nhật ký: risk_amount = 1R thật, gắn tên Strategy",
+          float(slot.journal.open_records()[0]["risk_amount"]) == 50.0
+          and slot.journal.open_records()[0]["strategy"] == "scripted")
+    br.k = 11
+    run.step()
+    check("trail hàng 10 dời SL 95 → 97", br.pos[0].sl == 97.0)
+    br.k = 12
+    run.step()
+    check("trail lùi (96) không dời SL", br.pos[0].sl == 97.0 and br.calls[-1][0] == "modify")
+    br.k = 13
+    run.step()
+    check("trail 101 vượt giá 100 → đóng ngay", not br.pos and br.calls[-1][0] == "close")
+    run.step()
+    check("đóng → nhật ký + báo Telegram", not slot.journal.open_records() and len(notes.closed) == 1)
+
+    # OCO stop: 2 chân, 1 chân khớp → hủy chân kia; flat → đóng.
+    run, br, notes, ks, slot = rig({t[9]: {"signal": 1, "entry_type": "stop", "entry_price": 102.0,
+                                           "sl": 98.0, "tp": 106.0, "oco_price": 98.0, "oco_sl": 102.0,
+                                           "oco_tp": 94.0, "expiry": 3},
+                                    t[10]: {"flat": True}})
+    run.step()
+    legs = [c for c in br.calls if c[0] == "pending"]
+    check("OCO: đặt 2 lệnh stop ngược hướng", [(c[1], c[3]) for c in legs] == [("buy", 102.0), ("sell", 98.0)])
+    check("hết hạn = open(9) + (3+1)h", set(slot.state["pending"].values()) == {str(t[9] + pd.Timedelta(hours=4))})
+    buy_leg = min(br.orders)
+    br.fill(buy_leg)
+    run.step()
+    check("chân buy khớp → hủy chân sell, giữ 1 vị thế", not br.orders and len(br.pos) == 1
+          and br.calls[-1] == ("cancel", buy_leg + 1))
+    br.k = 11
+    run.step()
+    check("flat hàng 10 → đóng vị thế", not br.pos and br.calls[-1] == ("close", buy_leg))
+
+    # Lệnh chờ hết hạn (bot tự hủy dự phòng).
+    run, br, *_ = rig({t[9]: {"signal": -1, "entry_type": "limit", "entry_price": 101.0, "sl": 103.0,
+                              "tp": 97.0, "expiry": 1}})
+    run.step()
+    br.k = 11
+    run.step()
+    check("limit expiry=1 hết hạn tại open(11) → hủy", not br.orders and br.calls[-1][0] == "cancel")
+
+    # Dry run / tín hiệu trễ / SL sai phía → không đặt lệnh.
+    run, br, *_ = rig({t[9]: {"signal": 1, "sl": 95.0}}, execute=False)
+    run.step()
+    check("dry run: không gọi broker", br.calls == [])
+    run, br, *_ = rig({t[9]: {"signal": 1, "sl": 95.0}}, lag=pd.Timedelta(minutes=20))
+    run.step()
+    check("vào trễ > 15 phút (vd restart giữa bar) → bỏ", br.calls == [])
+    run, br, *_ = rig({t[9]: {"signal": 1, "sl": 105.0}})
+    run.step()
+    check("SL sai phía entry → bỏ (như engine.open_pos)", br.calls == [])
+
+    # Kill-switch: /pause chặn; 2 lệnh thua 1R với giới hạn 1.5×1% → dừng + báo.
+    run, br, notes, ks, slot = rig({t[9]: {"signal": 1, "sl": 95.0}}, oos_dd=1.0)
+    ks.pause("scripted")
+    run.step()
+    check("Strategy tạm dừng → không vào lệnh", br.calls == [])
+    ks.resume("scripted")
+    for tk in (1, 2):
+        slot.journal.record_open(tk, "buy", 100, 95, "", 0.1, 0, 50.0, "x", strategy="scripted")
+        br.closed[tk] = ("failed", 95.0, -50.0)
+    br.k = 11
+    run.step()
+    check("2 × −1R → DD 1.99% ≥ 1.5% → Kill-switch dừng + notify_alert",
+          not ks.can_enter("scripted") and len(notes.alerts) == 1)
+
+    check("slot_magic khác nhau cho C1/C2/C4 trên cùng symbol",
+          len({slot_magic(20260723, n) for n in ("c1_donchian", "c2_orb", "c4_smc")}) == 3)
+    check("pending_expiry: expiry 0 tính như 1 (engine dùng max(exp, 1))",
+          pending_expiry(t[0], "M15", 0) == t[0] + pd.Timedelta(minutes=30))
+
+
 def test_crosscheck_verdict():
     print("crosscheck verdict:")
     from datafeed.crosscheck import verdict
@@ -615,4 +820,5 @@ if __name__ == "__main__":
     test_telegram_control()
     test_journal_and_alert()
     test_crosscheck_verdict()
+    test_live_loop()
     print("TẤT CẢ OK")
