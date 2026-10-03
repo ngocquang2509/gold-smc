@@ -8,7 +8,7 @@ An automated trading bot for the owner's own Exness MT5 account (XAUUSDm, EURUSD
 
 **The project is mid-rebuild.** The old SMC (H4→M15) and M5 scalp strategies were removed (recoverable from git tag `legacy-v1`) because their edge came from tuning on a single 2-year bull-market window. Read `docs/adr/0001-rebuild-strategy-layer-validation-first.md` before any strategy work. It fixes the Acceptance Gate, the Bake-off Candidates (C1 H4 Donchian trend, C2 session opening-range breakout, C4 stripped SMC), and the build order. Use the vocabulary in `GLOSSARY.md` (Edge, Out-of-sample, Final Holdout, Candidate, Complexity Budget, Shared Parameter Set, Kill-switch...).
 
-Build order (ADR 0001): ~~1. tag + remove legacy~~ → ~~2. Dukascopy data pipeline + Cost Stress + gap fills~~ → ~~3. walk-forward Acceptance Gate harness~~ → 4. Candidates C1, C2, C4 (code done; gate run waits for full data) → 5. Bake-off + Final Holdout (once; guard done in `backtest/holdout.py`) → 6. Telegram inbound commands + Kill-switch → 7. Forward Test on demo.
+Build order (ADR 0001): ~~1. tag + remove legacy~~ → ~~2. Dukascopy data pipeline + Cost Stress + gap fills~~ → ~~3. walk-forward Acceptance Gate harness~~ → 4. Candidates C1, C2, C4 (code done; gate run waits for full data) → 5. Bake-off + Final Holdout (once; `backtest/bakeoff.py` + once-only guard `backtest/holdout.py` done) → 6. Telegram inbound commands + Kill-switch → 7. Forward Test on demo.
 
 ## Commands
 
@@ -28,6 +28,9 @@ python -m backtest.selftest
 
 # Walk-forward + Acceptance Gate for a Candidate in strategy/candidates/<name>.py (exports CANDIDATE)
 python -m backtest.walkforward --candidate c1_donchian
+
+# Bake-off: every Candidate through the gate, table by name (no ranking); never runs the holdout
+python -m backtest.bakeoff
 
 # Final Holdout: preflight only; --confirm spends it (ONCE per Candidate, writes holdout/<name>.json, commit it)
 python -m backtest.holdout --candidate c1_donchian
@@ -58,6 +61,7 @@ Packages cross-import each other, so run everything with `python -m` from the re
 - **`strategy/candidate.py`**: the `Candidate` contract. `signals(bars, **params)` is vectorised and must be causal (row i uses bars ≤ i). The engine acts on it from bar i+1. The constructor enforces the ≤ 4-parameter Complexity Budget.
 - **`backtest/engine.py`**: bar replay in R units (risk 1 unit per trade). Conservative fills: SL before TP, gap past SL fills at open, stop entries gap to open, no TP on a pending-order fill bar. Optional `oco_price/oco_sl/oco_tp` columns add an opposite-side pending leg; the first fill cancels the other. Exits go through `risk.manage_step`.
 - **`strategy/candidates/`**: `c1_donchian` (H4 channel breakout, ATR stop + ratcheting ATR trail), `c2_orb` (M15 London/NY 08:00-local opening range, OCO stop bracket, flat 16:00 New York), `c4_smc` (M15 sweep → CHoCH → limit retest of the broken swing). Each has synthetic checks in `backtest/selftest.py`.
+- **`backtest/bakeoff.py`**: runs all `strategy/candidates/*` through `walkforward.run`. Keeps every passer and never picks a "best" one. An errored Candidate means the Bake-off is NOT concluded (an error is not a fail). It only suggests the holdout command for passers.
 - **`backtest/holdout.py`**: the only sanctioned use of `include_holdout=True`. Refuses unless the walk-forward passes, the code paths are committed, the holdout data is complete, and no marker exists. The marker in `holdout/` (git-tracked, never delete or edit it) is created before results are computed. Pass bar: PF ≥ 1.0, DD ≤ 15%.
 - **`backtest/walkforward.py`**: causality check (`assert_causal`) and data-coverage check, then grid × symbols simulated once, rolling 3y→1y windows with t-stat parameter selection, stitched OOS, Acceptance Gate. The gate constants are fixed: **don't change them to let a Candidate pass.**
 

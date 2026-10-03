@@ -391,6 +391,47 @@ def test_holdout():
             ho.wf.run, ho.simulate, ho.load_bars = real_run, real_sim, real_load
 
 
+def test_bakeoff():
+    import json
+    import tempfile
+    from pathlib import Path
+    from backtest import bakeoff as bk
+    print("Bake-off:")
+    check("tìm thấy đủ Candidate c1/c2/c4", {"c1_donchian", "c2_orb", "c4_smc"} <= set(bk.discover()))
+
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        check("chưa có marker → 'chưa dùng'", bk.holdout_status("a", d) == "chưa dùng")
+        (d / "a.json").write_text(json.dumps({"status": "started"}), encoding="utf-8")
+        (d / "b.json").write_text(json.dumps({"status": "done", "verdict": {"passed": False, "pf": 0.8}}),
+                                  encoding="utf-8")
+        check("marker started/done đọc đúng", bk.holdout_status("a", d).startswith("ĐÃ DÙNG (dở")
+              and bk.holdout_status("b", d).startswith("TRƯỢT"))
+
+        fake = {
+            "z_pass": {"passed": True, "summary": {"oos_trades": 300, "pf": 1.4, "max_dd_pct": 9.0,
+                                                   "winning_windows": "7/9"}},
+            "a_fail": {"passed": False, "summary": {"oos_trades": 150, "pf": 1.6, "max_dd_pct": 5.0,
+                                                    "winning_windows": "8/9"}},
+        }
+
+        def runner(name):
+            if name == "boom":
+                raise SystemExit("dữ liệu thủng")
+            return fake[name]
+        rows = bk.run_bakeoff(["z_pass", "boom", "a_fail"], runner=runner, marker_dir=d)
+        check("lỗi 1 Candidate không dừng cả Bake-off, ghi lại lỗi",
+              [r["candidate"] for r in rows] == ["a_fail", "boom", "z_pass"]
+              and rows[1]["gate"] == "LỖI" and "thủng" in rows[1]["note"])
+        check("không xếp hạng theo PF: thứ tự theo tên, PF cao mà trượt vẫn là trượt",
+              rows[0]["gate"] == "TRƯỢT" and rows[2]["gate"] == "QUA")
+        check("chỉ Candidate QUA + holdout chưa dùng mới được gợi ý holdout",
+              bk.holdout_next(rows) == ["z_pass"])
+        check("có Candidate LỖI → CHƯA KẾT LUẬN (lỗi ≠ trượt)", bk.conclusion(rows).startswith("CHƯA KẾT LUẬN"))
+        rows = bk.run_bakeoff(["a_fail"], runner=runner, marker_dir=d)
+        check("tất cả trượt (không lỗi) → 0/N là kết quả hợp lệ", "0/1" in bk.conclusion(rows))
+
+
 if __name__ == "__main__":
     import sys
     sys.stdout.reconfigure(encoding="utf-8")   # console Windows mặc định cp1252
@@ -400,4 +441,5 @@ if __name__ == "__main__":
     test_c2()
     test_c4()
     test_holdout()
+    test_bakeoff()
     print("TẤT CẢ OK")
