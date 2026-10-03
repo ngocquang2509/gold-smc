@@ -586,6 +586,21 @@ def test_journal_and_alert():
     check("cảnh báo Kill-switch escape HTML ('<' không làm hỏng tin)", "&lt; 0.9" in sent[0] and "c1" in sent[0])
 
 
+def test_crosscheck_verdict():
+    print("crosscheck verdict:")
+    from datafeed.crosscheck import verdict
+    good = {"tf": "M15", "coverage_of_exness": 0.99, "median_close_diff_atr": -0.05,
+            "p95_abs_close_diff_atr": 0.4, "return_corr": 0.97, "bar_direction_agree": 0.92}
+    check("M15 tốt → mọi metric ĐẠT", all(ok for *_, ok in verdict(good)))
+    v = {m: ok for m, _, _, ok in verdict({**good, "median_close_diff_atr": -0.15})}
+    check("median lệch âm vượt |0.10| → TRƯỢT (so trị tuyệt đối)", not v["median_close_diff_atr"])
+    v = {m: ok for m, _, _, ok in verdict({**good, "return_corr": float("nan")})}
+    check("NaN → TRƯỢT", not v["return_corr"])
+    v = {m: ok for m, _, _, ok in verdict({**good, "tf": "H4"})}
+    check("H4 chặt hơn M15 (p95 0.4 ATR, corr 0.97 trượt ở H4)",
+          not v["p95_abs_close_diff_atr"] and not v["return_corr"])
+
+
 if __name__ == "__main__":
     import sys
     sys.stdout.reconfigure(encoding="utf-8")   # console Windows mặc định cp1252
@@ -599,4 +614,5 @@ if __name__ == "__main__":
     test_killswitch()
     test_telegram_control()
     test_journal_and_alert()
+    test_crosscheck_verdict()
     print("TẤT CẢ OK")
