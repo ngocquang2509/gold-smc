@@ -103,9 +103,11 @@ class ScalpConfig:
     swap_short_per_lot: float = 0.0
 
     # ── Telegram (tái dùng notifier.py — reconcile_journal() cần notifier) ──
+    # Dùng chung bot/chat với bot SMC (config.py) — có thể override bằng biến môi trường
+    # TELEGRAM_TOKEN / TELEGRAM_CHAT_ID nếu muốn tách kênh riêng cho scalp.
     telegram_enabled: bool = True
-    telegram_token: str = ""      # trống = tắt (TelegramNotifier.from_config yêu cầu cả token+chat_id)
-    telegram_chat_id: str = ""
+    telegram_token: str = "8490073729:AAGvg5l0cq9SNcsHXHLqAznKcdaZyJwIkrc"
+    telegram_chat_id: str = "5870497244"
 
     # ── Execution ──────────────────────────────────────────
     magic_number: int = 20260731  # magic RIÊNG cho luồng scalp, khác 3 magic của bot SMC

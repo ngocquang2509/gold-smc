@@ -105,3 +105,17 @@ Data flows one direction: raw OHLC bars → SMC primitives → strategy decision
 - **`dry_run` defaults to `True`.** Do not flip it as a side effect of other changes. The intended progression is backtest → dry run → demo → live.
 - SMC dataclasses carry a positional `index` into the DataFrame; keep index bookkeeping consistent when slicing (backtest passes slices, so an event's `index` is relative to the slice it was found in).
 - `magic_number` scopes which positions the bot manages; do not remove that filter.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues for ngocquang2509/gold-smc (via the `gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
