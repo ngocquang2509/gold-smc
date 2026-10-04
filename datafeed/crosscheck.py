@@ -89,6 +89,11 @@ def main():
         stream.reconfigure(encoding="utf-8")
     if not MT5_AVAILABLE or not mt5.initialize():
         raise SystemExit("Cần terminal MT5 đang chạy (Windows)")
+    if mt5.symbol_info(a.symbol) is None or not mt5.symbol_select(a.symbol, True):
+        acc = mt5.account_info()
+        mt5.shutdown()
+        raise SystemExit(f"Tài khoản {acc.login} ({acc.server}) không có symbol {a.symbol} — "
+                         f"đăng nhập tài khoản Exness Standard (symbol hậu tố 'm')")
     try:
         rows = [compare(a.symbol, tf) for tf in ("M15", "H4")]
     finally:
