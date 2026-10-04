@@ -18,3 +18,16 @@ The new Strategy is picked by a Bake-off of simple Candidates (Complexity Budget
 - The Kill-switch requires inbound Telegram commands (`/status`, `/pause`, `/resume`, owner chat only, no order placement), so the Notifier gains a receive side.
 - Build order: tag + remove legacy → data pipeline and cost stress → walk-forward gate harness → Candidates C1 (H4 Donchian trend), C2 (session opening-range breakout), C4 (stripped SMC) → Bake-off + Final Holdout → Telegram control + Kill-switch → Forward Test. The gate is built before any Candidate exists, so it can't be shaped to fit one.
 - The old SMC and scalp code is removed from `main` and kept only under the git tag `legacy-v1`.
+
+## Outcomes
+
+- **2026-10-04, data validated.** Dukascopy M1 for 2014-01-01 → 2026-09-30 is complete for XAUUSD, EURUSD and GBPUSD (3,991/3,991 trading days each). The Exness cross-check passed every threshold on M15 and H4 for all three symbols (Exness Standard demo, Jul 2024 → Sep 2025). The tightest margin was GBPUSD M15 bar-direction agreement, 95.3% against ≥ 90%.
+- **2026-10-04, Bake-off #1: 0/3 passed** (`reports/bakeoff-20261004-114359.json`, gitignored; numbers recorded here). Walk-forward OOS 2017 → Sep 2025, costs ×1.5:
+
+  | Candidate | OOS PF | Max DD @ 1% | Profitable windows | OOS trades |
+  |---|---|---|---|---|
+  | C1 H4 Donchian | 0.84 | 45.4% | 2/9 | 465 |
+  | C2 opening-range breakout | 0.92 | 99.0% | 2/9 | 6,781 |
+  | C4 stripped SMC | 0.87 | 63.7% | 2/9 | 802 |
+
+  The in-sample t-stat of the selected parameter set was mostly negative in every window, so no grid point had an edge to select. The Final Holdout was **not** used (no marker in `holdout/`) and stays available for future Candidates. Per the Consequences above, the bot stays in dry run, C1/C2/C4 are closed (no re-tuning, filters, or symbol subsets on this data), and a second Bake-off needs new Candidate ideas fixed before they are tested.
