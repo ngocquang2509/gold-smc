@@ -8,7 +8,7 @@ An automated trading bot for the owner's own Exness MT5 account (XAUUSDm, EURUSD
 
 **The project is mid-rebuild.** The old SMC (H4→M15) and M5 scalp strategies were removed (recoverable from git tag `legacy-v1`) because their edge came from tuning on a single 2-year bull-market window. Read `docs/adr/0001-rebuild-strategy-layer-validation-first.md` before any strategy work. It fixes the Acceptance Gate, the Bake-off Candidates (C1 H4 Donchian trend, C2 session opening-range breakout, C4 stripped SMC), and the build order. Use the vocabulary in `GLOSSARY.md` (Edge, Out-of-sample, Final Holdout, Candidate, Complexity Budget, Shared Parameter Set, Kill-switch...).
 
-Build order (ADR 0001): ~~1. tag + remove legacy~~ → ~~2. Dukascopy data pipeline + Cost Stress + gap fills~~ → ~~3. walk-forward Acceptance Gate harness~~ → 4. Candidates C1, C2, C4 (code done; gate run waits for full data) → 5. Bake-off + Final Holdout (once; `backtest/bakeoff.py` + once-only guard `backtest/holdout.py` done) → 6. Telegram inbound commands + Kill-switch (components done; wired in by the step-7 live loop) → 7. Forward Test on demo (live loop `execution/live.py` done; waits for a holdout passer).
+Build order (ADR 0001): ~~1. tag + remove legacy~~ → ~~2. Dukascopy data pipeline + Cost Stress + gap fills~~ → ~~3. walk-forward Acceptance Gate harness~~ → 4. Candidates C1, C2, C4 → 5. Bake-off + Final Holdout (**Bake-off #1 on 2026-10-04: 0/3 passed**, Final Holdout unspent; see ADR 0001 Outcomes. C1/C2/C4 are closed; the next Bake-off needs new Candidates) → 6. Telegram inbound commands + Kill-switch (components done; wired in by the step-7 live loop) → 7. Forward Test on demo (live loop `execution/live.py` done; waits for a holdout passer).
 
 ## Commands
 
