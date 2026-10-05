@@ -352,6 +352,165 @@ def test_c4():
     check("đúng 4 tham số", len(C4.param_grid) == 4)
 
 
+def _ou(n=3000, seed=4, theta=0.15, freq="4h"):
+    """Chuỗi hồi quy về trung bình (Ornstein-Uhlenbeck quanh 100)."""
+    rng = np.random.default_rng(seed)
+    x = np.zeros(n)
+    for i in range(1, n):
+        x[i] = x[i - 1] * (1 - theta) + rng.standard_normal()
+    c = 100 + x
+    o = np.concatenate([[c[0]], c[:-1]])
+    return pd.DataFrame({"open": o, "high": np.maximum(o, c) + 0.3, "low": np.minimum(o, c) - 0.3,
+                         "close": c}, index=pd.date_range("2020-01-01", periods=n, freq=freq))
+
+
+def test_a_zfade():
+    from strategy.candidates.a_zfade import ATR_PERIOD, CANDIDATE as A
+    from strategy.indicators import atr
+    print("A z-fade:")
+    b = _walk()
+    p = {"n": 20, "k": 2.0, "stop_atr": 2.0, "max_bars": 6}
+    s = A.signals(b, **p)
+    a = atr(b, ATR_PERIOD)
+    sma = b.close.rolling(20).mean()
+    z = (b.close - sma) / a
+    longs, shorts = s.index[s.signal == 1], s.index[s.signal == -1]
+    check("có cả tín hiệu mua lẫn bán", len(longs) > 5 and len(shorts) > 5)
+    check("mua = bar ĐẦU TIÊN z ≤ −k (sự kiện), bán = bar đầu tiên z ≥ +k",
+          (z[longs] <= -2).all() and (z.shift()[longs] > -2).all()
+          and (z[shorts] >= 2).all() and (z.shift()[shorts] < 2).all())
+    check("không lặp tín hiệu khi z còn ở ngoài ngưỡng",
+          ((z <= -2) & (z.shift() <= -2) & (s.signal != 0)).sum() == 0)
+    check("SL = close ∓ stop_atr·ATR, market, không TP",
+          np.allclose(s.sl[longs], b.close[longs] - 2 * a[longs])
+          and np.allclose(s.sl[shorts], b.close[shorts] + 2 * a[shorts])
+          and (s.entry_type[longs] == "market").all() and s.tp.isna().all())
+    side = np.sign(b.close - sma)
+    check("flat đúng ở bar close cắt qua SMA", (s.flat == ((side != side.shift()) & sma.notna()
+                                                          & sma.shift().notna())).all() and s.flat.sum() > 10)
+    check("max_bars có trên mọi hàng", (s.max_bars == 6).all())
+    check("không tín hiệu khi ATR/SMA chưa ấm", (s.signal[a.isna() | sma.isna()] == 0).all())
+    assert_causal(A, b, p)
+    check("A nhân quả", True)
+    check("đúng 4 tham số, không BE/partial", len(A.param_grid) == 4 and not A.uses_be_partial)
+    ou = _ou()
+    tr = simulate(ou, A.signals(ou, **p), CFG0)
+    check("chuỗi hồi quy về trung bình → tổng R dương; thoát bằng FLAT và TIME",
+          len(tr) > 20 and tr.r.sum() > 0 and {"FLAT", "TIME"} <= set(tr.result))
+
+
+def test_b_tsmom():
+    from strategy.candidates.b_tsmom import ATR_PERIOD, CANDIDATE as B
+    from strategy.indicators import atr
+    print("B time-series momentum:")
+    rng = np.random.default_rng(5)
+    idx = pd.date_range("2016-01-01", "2020-12-31", freq="D")
+    idx = idx[idx.dayofweek != 5]                          # không có Thứ Bảy, CÓ mẩu Chủ Nhật
+    c = 100 + (rng.standard_normal(len(idx)) * 1.0).cumsum()
+    o = np.concatenate([[c[0]], c[:-1]])
+    b = pd.DataFrame({"open": o, "high": np.maximum(o, c) + 0.3, "low": np.minimum(o, c) - 0.3,
+                      "close": c}, index=idx)
+    clean = b.copy()
+    sun = b.index.dayofweek == 6
+    b.loc[sun, ["high", "low", "close"]] = b.loc[sun, ["high", "low", "close"]] + [50, -50, 30]  # Chủ Nhật "điên"
+    p = {"lookback": 60, "stop_atr": 4.0}
+    s = B.signals(b, **p)
+    wk = b[~sun]
+    sw = B.signals(wk, **p)
+    check("bỏ mẩu Chủ Nhật: tín hiệu/SL/flat ngày thường y hệt khi xóa hẳn Chủ Nhật",
+          s.loc[wk.index, "signal"].equals(sw.signal) and s.loc[wk.index, "flat"].equals(sw.flat)
+          and np.allclose(s.loc[wk.index, "sl"], sw.sl, equal_nan=True))
+    check("Chủ Nhật: không tín hiệu, không flat", (s.signal[sun] == 0).all() and not s.flat[sun].any())
+    ret = wk.close / wk.close.shift(60) - 1
+    a = atr(wk, ATR_PERIOD)
+    ok = ret.notna() & a.notna()
+    check("tín hiệu = dấu lợi nhuận 60 ngày GIAO DỊCH (trạng thái, mọi bar)",
+          (sw.signal[ok] == np.sign(ret[ok])).all() and (sw.signal[~ok] == 0).all()
+          and (sw.signal != 0).sum() > 1000)
+    lg = ok & (sw.signal > 0)
+    check("SL = close ∓ stop_atr·ATR(20), market, không TP",
+          np.allclose(sw.sl[lg], wk.close[lg] - 4 * a[lg]) and sw.tp.isna().all()
+          and (sw.entry_type == "market").all())
+    sg = sw.signal
+    check("flat đúng ở bar dấu đổi", (sw.flat == (ok & ok.shift(1, fill_value=False) & (sg != sg.shift()))).all()
+          and sw.flat.sum() > 5)
+    assert_causal(B, b, p)
+    check("B nhân quả (cả khi có Chủ Nhật)", True)
+    check("2 tham số", len(B.param_grid) == 2 and not B.uses_be_partial)
+    up = clean.copy()
+    drift = np.arange(len(up)) * 0.3
+    up[["open", "high", "low", "close"]] = up[["open", "high", "low", "close"]].add(drift, axis=0)
+    tr = simulate(up, B.signals(up, **p), CFG0)
+    check("xu hướng tăng → tổng R dương", len(tr) >= 1 and tr.r.sum() > 0)
+    tr = simulate(clean, B.signals(clean, **p), CFG0)
+    again = (tr.result.shift() == "SL/BE") & (tr.direction == tr.direction.shift())
+    check("bị SL mà dấu còn giữ → vào lại cùng hướng; đổi dấu → FLAT",
+          again.any() and (tr.result == "FLAT").any())
+
+
+def test_c_intramom():
+    from strategy.candidates.c_intramom import ATR_PERIOD, CANDIDATE as C, daily_atr_prior
+    from strategy.indicators import atr
+    print("C intraday momentum:")
+    rng = np.random.default_rng(6)
+    idx = pd.date_range("2020-01-01", "2020-04-30 23:00", freq="h")
+    idx = idx[idx.dayofweek != 5]
+    c = 100 + (rng.standard_normal(len(idx)) * 0.3).cumsum()
+    o = np.concatenate([[c[0]], c[:-1]])
+    b = pd.DataFrame({"open": o, "high": np.maximum(o, c) + 0.1, "low": np.minimum(o, c) - 0.1,
+                      "close": c}, index=idx)
+    ts = pd.Timestamp
+    s = C.signals(b, k=0.0, stop_atr=2.0)
+    a = atr(b, ATR_PERIOD)
+
+    def mv(start, end):
+        return np.sign(b.close[ts(end)] - b.open[ts(start)])
+    # Mùa đông: London 08:00 = 08:00 UTC, NY 07:00 = 12:00 UTC. Hè: 07:00 / 11:00 UTC.
+    # Tuần lệch DST (Mỹ đã đổi 08/03, Anh chưa tới 29/03): 08:00 / 11:00 UTC → cửa sổ 4h.
+    check("ATR D1 chưa ấm (tuần đầu) → không lệnh dù k = 0", (s.signal[:"2020-01-15"] == 0).all())
+    check("mùa đông: tín hiệu ở bar 12:00 UTC, hướng = close(12:00) − open(08:00)",
+          s.signal[ts("2020-02-12 12:00")] == mv("2020-02-12 08:00", "2020-02-12 12:00")
+          and (s.signal["2020-02-12"] != 0).sum() == 1)
+    check("tuần lệch DST: cửa sổ 08:00 → 11:00 UTC (4h)",
+          s.signal[ts("2020-03-16 11:00")] == mv("2020-03-16 08:00", "2020-03-16 11:00")
+          and (s.signal["2020-03-16"] != 0).sum() == 1)
+    check("mùa hè: cửa sổ 07:00 → 11:00 UTC",
+          s.signal[ts("2020-04-15 11:00")] == mv("2020-04-15 07:00", "2020-04-15 11:00")
+          and (s.signal["2020-04-15"] != 0).sum() == 1)
+    at = s.index[s.signal != 0]
+    check("SL = close ∓ stop_atr·ATR H1, market, không TP",
+          np.allclose(s.sl[at], b.close[at] - s.signal[at] * 2 * a[at]) and s.tp.isna().all()
+          and (s.entry_type[at] == "market").all())
+    check("flat từ bar 15:00 NY (20:00 UTC đông / 19:00 UTC hè), không trước đó trong phiên",
+          s.flat[ts("2020-02-12 20:00")] and not s.flat["2020-02-12 05:00":"2020-02-12 19:00"].any()
+          and s.flat[ts("2020-04-15 19:00")] and not s.flat["2020-04-15 04:00":"2020-04-15 18:00"].any())
+    s2 = C.signals(b.drop(ts("2020-02-12 08:00")), k=0.0, stop_atr=2.0)
+    check("thiếu bar neo → bỏ ngày đó", (s2.signal["2020-02-12"] == 0).all()
+          and s2.signal[ts("2020-02-13 12:00")] != 0)
+    d = b[b.index.dayofweek != 6].resample("1D").agg(
+        {"open": "first", "high": "max", "low": "min", "close": "last"}).dropna()
+    datr = daily_atr_prior(b)
+    check("ATR D1 ngày d chỉ dùng các ngày < d",
+          abs(datr[ts("2020-02-20")] - atr(d[:"2020-02-19"], ATR_PERIOD).iloc[-1]) < 1e-12)
+    s5 = C.signals(b, k=0.5, stop_atr=2.0)
+    ends = s.index[s.signal != 0]
+    thr = 0.5 * datr.reindex(ends.normalize()).to_numpy()
+    def london8(t):   # 08:00 London của cùng ngày → UTC
+        return (t.normalize() + pd.Timedelta(hours=8)).tz_localize("Europe/London").tz_convert("UTC").tz_localize(None)
+    move = np.array([b.close[t] - b.open[london8(t)] for t in ends])
+    check("k = 0.5: có lệnh ⇔ |biến động| ≥ 0.5·ATR D1 ngày trước",
+          ((s5.signal[ends] != 0).to_numpy() == (np.abs(move) >= thr)).all()
+          and 0 < (s5.signal != 0).sum() < (s.signal != 0).sum())
+    for k in (0.0, 0.5):
+        assert_causal(C, b, {"k": k, "stop_atr": 2.0})
+    check("C nhân quả (qua đổi giờ Mỹ & Anh)", True)
+    check("2 tham số", len(C.param_grid) == 2 and not C.uses_be_partial)
+    tr = simulate(b, s, CFG0)
+    check("mọi lệnh đóng trong ngày (FLAT/SL), không qua đêm",
+          len(tr) > 50 and set(tr.result) <= {"FLAT", "SL/BE", "SL-GAP"}
+          and (tr.exit_time.dt.normalize() == tr.entry_time.dt.normalize()).all())
+
+
 def _refused(fn, *a, **kw) -> bool:
     try:
         fn(*a, **kw)
@@ -894,6 +1053,9 @@ if __name__ == "__main__":
     test_c1()
     test_c2()
     test_c4()
+    test_a_zfade()
+    test_b_tsmom()
+    test_c_intramom()
     test_holdout()
     test_bakeoff()
     test_killswitch()

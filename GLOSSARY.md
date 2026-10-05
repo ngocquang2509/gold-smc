@@ -32,6 +32,13 @@ _Avoid_: test period, forward test
 **Candidate**:
 A Strategy under evaluation that has not yet cleared the Acceptance Gate. Most Candidates are expected to fail.
 
+**Retired Candidate**:
+A Candidate that failed a Bake-off. It is never re-tuned, filtered or re-run on the same history and can't use the Final Holdout.
+_Avoid_: closed, archived, shelved
+
+**Trial Count**:
+The running total of Candidates that have been put through the walk-forward part of the Acceptance Gate on the same out-of-sample history. A pass is judged against it: the more trials, the likelier one passes by luck.
+
 **Bake-off**:
 Running several Candidates through the same Acceptance Gate on the same data and keeping only those that pass. Zero passes is a valid result.
 
