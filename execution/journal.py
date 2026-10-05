@@ -19,6 +19,7 @@ FIELDS = [
     "ticket", "symbol", "mode", "created", "direction",
     "entry", "sl", "tp", "lot", "rr", "risk_amount", "reason",
     "result", "closed", "close_price", "profit",
+    "strategy",   # thêm sau (step 6): CSV cũ thiếu cột này vẫn đọc được (để trống)
 ]
 
 
@@ -59,7 +60,7 @@ class TradeJournal:
         return None
 
     def record_open(self, ticket, direction, entry, sl, tp, lot, rr,
-                    risk_amount, reason, mode="live", created=None):
+                    risk_amount, reason, mode="live", created=None, strategy=""):
         """Ghi một lệnh mới (result="open"). Bỏ qua nếu ticket đã có."""
         if self.has(ticket):
             return
@@ -72,6 +73,7 @@ class TradeJournal:
             "entry": entry, "sl": sl, "tp": tp, "lot": lot,
             "rr": rr, "risk_amount": risk_amount, "reason": reason,
             "result": "open", "closed": "", "close_price": "", "profit": "",
+            "strategy": strategy,
         }
         self._records.append(rec)
         self._flush()
@@ -89,6 +91,19 @@ class TradeJournal:
                 log.info(f"📓 Lệnh #{ticket} → {result}"
                          + (f" (P/L {profit})" if profit is not None else ""))
                 return
+
+    def closed_r(self, strategy: str) -> list[tuple]:
+        """[(thời điểm đóng, R)] các lệnh ĐÃ ĐÓNG của một Strategy — đầu vào Kill-switch.
+        R = profit / risk_amount (profit đã gồm chi phí thật)."""
+        out = []
+        for r in self._records:
+            if r.get("strategy") != strategy or r["result"] == "open":
+                continue
+            try:
+                out.append((r["closed"], float(r["profit"]) / float(r["risk_amount"])))
+            except (TypeError, ValueError, ZeroDivisionError):
+                log.warning(f"Lệnh #{r['ticket']}: thiếu profit/risk_amount — bỏ khỏi Kill-switch")
+        return out
 
     def open_records(self) -> list[dict]:
         """Bản ghi các lệnh đang mở (để engine paper theo dõi)."""

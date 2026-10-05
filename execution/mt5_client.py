@@ -151,19 +151,21 @@ class MT5Client:
         return [o for o in (orders or []) if o.magic == self.magic]
 
     def pending_order(self, direction: str, lot: float, price: float, sl: float, tp: float,
-                      expiry_dt, comment: str = "SMC-limit") -> int | None:
-        """Đặt LIMIT nghỉ tại biên vùng, broker tự HẾT HẠN ở `expiry_dt` (ORDER_TIME_SPECIFIED)
-        nên không cần tự huỷ theo nến. price/sl/tp đã được làm tròn đúng digits ở strategy.
+                      expiry_dt, comment: str = "SMC-limit", kind: str = "limit") -> int | None:
+        """Đặt lệnh chờ LIMIT hoặc STOP (`kind`), broker tự HẾT HẠN ở `expiry_dt`
+        (ORDER_TIME_SPECIFIED, giờ server). tp = 0 → không TP.
         Trả về order ticket (== position ticket khi khớp) hoặc None."""
-        order_type = mt5.ORDER_TYPE_BUY_LIMIT if direction == "buy" else mt5.ORDER_TYPE_SELL_LIMIT
+        types = {("limit", "buy"): mt5.ORDER_TYPE_BUY_LIMIT, ("limit", "sell"): mt5.ORDER_TYPE_SELL_LIMIT,
+                 ("stop", "buy"): mt5.ORDER_TYPE_BUY_STOP, ("stop", "sell"): mt5.ORDER_TYPE_SELL_STOP}
+        digits = self._digits()
         request = {
             "action": mt5.TRADE_ACTION_PENDING,
             "symbol": self.symbol,
             "volume": lot,
-            "type": order_type,
-            "price": price,
-            "sl": sl,
-            "tp": tp,
+            "type": types[(kind, direction)],
+            "price": round(price, digits),
+            "sl": round(sl, digits),
+            "tp": round(tp, digits),
             "deviation": self.deviation,
             "magic": self.magic,
             "comment": comment,
@@ -173,12 +175,12 @@ class MT5Client:
         }
         result = mt5.order_send(request)
         if result is None:
-            log.error(f"Đặt LIMIT thất bại: order_send() trả về None — {mt5.last_error()}")
+            log.error(f"Đặt {kind.upper()} thất bại: order_send() trả về None — {mt5.last_error()}")
             return None
         if result.retcode != mt5.TRADE_RETCODE_DONE:
-            log.error(f"Đặt LIMIT thất bại: retcode={result.retcode}, {result.comment}")
+            log.error(f"Đặt {kind.upper()} thất bại: retcode={result.retcode}, {result.comment}")
             return None
-        log.info(f"⏳ LIMIT {direction.upper()} {lot} @ {price} | SL {sl} | TP {tp} | "
+        log.info(f"⏳ {kind.upper()} {direction.upper()} {lot} @ {price} | SL {sl} | TP {tp} | "
                  f"order {result.order} (hết hạn {expiry_dt})")
         return result.order
 
@@ -232,7 +234,7 @@ class MT5Client:
             "tp": position.tp,
         }
         result = mt5.order_send(request)
-        ok = result.retcode == mt5.TRADE_RETCODE_DONE
+        ok = result is not None and result.retcode == mt5.TRADE_RETCODE_DONE
         if ok:
             log.info(f"🔒 Dời SL vị thế {position.ticket} → {new_sl}")
         return ok
@@ -254,7 +256,7 @@ class MT5Client:
             "type_filling": mt5.ORDER_FILLING_IOC,
         }
         result = mt5.order_send(request)
-        ok = result.retcode == mt5.TRADE_RETCODE_DONE
+        ok = result is not None and result.retcode == mt5.TRADE_RETCODE_DONE
         if ok:
             log.info(f"💰 Chốt {lot_to_close} lot vị thế {position.ticket}")
         return ok

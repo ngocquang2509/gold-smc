@@ -1,6 +1,6 @@
 """
 Quản lý vốn & rủi ro:
-- Position sizing theo % rủi ro cố định (1%/lệnh).
+- Position sizing theo % rủi ro cố định (≤1%/lệnh — xem ADR 0001).
 - Kiểm tra R:R tối thiểu trước khi vào lệnh.
 - Daily loss limit + portfolio heat cap.
 - ENGINE QUẢN LÝ LỆNH DÙNG CHUNG (breakeven + partial + mô phỏng SL/TP):
@@ -20,8 +20,7 @@ class TradePlan:
     rr: float
     risk_amount: float
     reason: str
-    sweep_level: float | None = None   # Mức thanh khoản đã quét (để chống re-entry)
-    order_kind: str = "limit"          # #4: "limit" (nghỉ tại biên vùng) | "market"
+    order_kind: str = "market"         # "market" | "limit" (pending tại giá entry)
 
 
 def calc_lot_size(balance: float, risk_pct: float, entry: float, sl: float,
@@ -98,18 +97,19 @@ def breakeven_level(state: PositionState, cfg) -> float:
 
 
 def _nights(entry_time, exit_time) -> int:
-    """Số đêm giữ lệnh (số lần bắc qua rollover 00:00 giờ server).
-    Rollover thứ Tư tính x3 (triple swap bù cuối tuần) → mỗi T4 cộng thêm 2 đêm."""
-    e0 = pd.Timestamp(entry_time).normalize()
-    e1 = pd.Timestamp(exit_time).normalize()
-    n = (e1 - e0).days
-    if n <= 0:
-        return 0
-    cur = e0
-    for _ in range(n):
-        cur += pd.Timedelta(days=1)
-        if cur.weekday() == 2:   # bắc cầu sang thứ Tư → triple swap
-            n += 2
+    """Số đêm swap tính phí = số rollover (00:00 giờ server) mà lệnh giữ qua.
+    Chỉ rollover KẾT THÚC một ngày T2–T6 mới tính phí (không có rollover T7/CN). Rollover
+    kết thúc thứ Tư tính x3 (đêm T4→T5) — trả trước cho cuối tuần. Exness: swap_rollover3days
+    = thứ Tư cho cả XAUUSDm/EURUSDm/GBPUSDm (đọc từ MT5 ngày 2026-10-05).
+    → Giữ T6→T2 = 1 đêm, giữ trọn 1 tuần = 7 đêm."""
+    day = pd.Timestamp(entry_time).normalize()
+    end = pd.Timestamp(exit_time).normalize()
+    n = 0
+    while day < end:                 # rollover lúc hết ngày `day`
+        wd = day.weekday()
+        if wd < 5:
+            n += 3 if wd == 2 else 1
+        day += pd.Timedelta(days=1)
     return n
 
 
@@ -136,18 +136,22 @@ def _exit_row(state: PositionState, exit_price, exit_time, pnl, cost, result, lo
     }
 
 
-def manage_step(state: PositionState, high: float, low: float, close: float,
+def manage_step(state: PositionState, open_: float, high: float, low: float, close: float,
                 now, cfg, apply_costs: bool = True) -> tuple[float, list[dict], bool]:
     """Quản lý theo NẾN (backtest + paper). Trả về (balance_delta, rows, closed).
-    Thứ tự bảo thủ trong 1 nến: SL → TP → (BE/partial tại close)."""
+    Thứ tự bảo thủ trong 1 nến: SL → TP → (BE/partial tại close).
+    GAP: nếu nến MỞ đã vượt qua SL (gap cuối tuần/tin), khớp SL tại giá open — lỗ thật
+    lớn hơn 1R, không phải tại mức SL. Gap qua TP thì vẫn khớp tại TP (không thưởng)."""
     is_buy = state.direction == "buy"
     hit_sl = low <= state.sl if is_buy else high >= state.sl
     hit_tp = high >= state.tp if is_buy else low <= state.tp
 
     if hit_sl:
+        gapped = open_ <= state.sl if is_buy else open_ >= state.sl
+        fill = open_ if gapped else state.sl
         cost = trade_cost(state, now, state.lot, cfg) if apply_costs else 0.0
-        pnl = position_pnl(state, state.sl) - cost
-        return pnl, [_exit_row(state, state.sl, now, pnl, cost, "SL/BE")], True
+        pnl = position_pnl(state, fill) - cost
+        return pnl, [_exit_row(state, fill, now, pnl, cost, "SL-GAP" if gapped else "SL/BE")], True
     if hit_tp:
         cost = trade_cost(state, now, state.lot, cfg) if apply_costs else 0.0
         pnl = position_pnl(state, state.tp) - cost

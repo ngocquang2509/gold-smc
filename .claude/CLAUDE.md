@@ -4,104 +4,93 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Gold (XAUUSD) trading bot for MetaTrader 5 implementing Smart Money Concepts (SMC) on a multi-timeframe basis (H4 trend → M15 entry), with fixed 1%-per-trade risk. Code comments and log messages are in Vietnamese; keep that convention when editing.
+An automated trading bot for the owner's own Exness MT5 account (XAUUSDm, EURUSDm, GBPUSDm), monitored over Telegram. Code comments and log messages are in Vietnamese; keep that convention when editing.
+
+**The project is mid-rebuild.** The old SMC (H4→M15) and M5 scalp strategies were removed (recoverable from git tag `legacy-v1`) because their edge came from tuning on a single 2-year bull-market window. Read `docs/adr/0001-rebuild-strategy-layer-validation-first.md` before any strategy work. It fixes the Acceptance Gate, the Bake-off Candidates (C1 H4 Donchian trend, C2 session opening-range breakout, C4 stripped SMC), and the build order. Use the vocabulary in `GLOSSARY.md` (Edge, Out-of-sample, Final Holdout, Candidate, Complexity Budget, Shared Parameter Set, Kill-switch...).
+
+Build order (ADR 0001): ~~1. tag + remove legacy~~ → ~~2. Dukascopy data pipeline + Cost Stress + gap fills~~ → ~~3. walk-forward Acceptance Gate harness~~ → 4. Candidates C1, C2, C4 → 5. Bake-off + Final Holdout (**Bake-off #1 on 2026-10-04: 0/3 passed**, Final Holdout unspent; see ADR 0001 Outcomes. C1/C2/C4 are retired. **Bake-off #2** (`a_zfade`, `b_tsmom`, `c_intramom`, ADR 0002) on 2026-10-05: **0/3 passed**, all retired; Trial Count 6, 0 passes. **Decision: stop.** The bot stays in dry run; a Bake-off #3 needs a new information source, not more rules on the same bars) → 6. Telegram inbound commands + Kill-switch (components done; wired in by the step-7 live loop) → 7. Forward Test on demo (live loop `execution/live.py` done; waits for a holdout passer).
 
 ## Commands
-
-Each symbol has its own independent config in `config/config.py`, selected with `--symbol`
-(`XAUUSDm`/`EURUSDm`/`GBPUSDm`, aliases `gold`/`eurusd`/`gbpusd`). Default is
-`XAUUSDm`. Tuning one symbol never touches the other.
-
-`execution/main.py` (live/demo loop) can also run **multiple symbols in one process** via
-`--symbols a,b,c` (comma-separated, aliases accepted) — a single sequential
-single-thread loop processes each symbol's own state (risk guard, journal,
-cooldown) independently every poll tick. `--symbol` (singular) still works for
-one symbol, unchanged. `backtest/backtest.py` remains single-symbol only (`--symbol`) —
-multi-symbol is a live/demo-loop-only capability.
-
-The project is organized by technical role — `config/`, `strategy/` (includes the
-`smc/` primitives subpackage), `risk/`, `backtest/`, `execution/` — each an
-importable package. Because these packages cross-import each other, everything is
-run with `python -m` from the repo root, not as a bare script path.
 
 ```bash
 # Install (no requirements file — install manually)
 pip install MetaTrader5 pandas numpy certifi
-
-# Live/demo loop (defaults to dry_run — logs signals, places no orders)
-python -m execution.main --symbol XAUUSDm                  # 1 symbol (gold)
-python -m execution.main --symbols EURUSDm,GBPUSDm         # nhiều symbol, 1 process
-
-# Backtest from MT5 (Windows only) — 2 years
-python -m backtest.backtest --from-mt5 --symbol XAUUSDm --years 2 --balance 10000
-python -m backtest.backtest --from-mt5 --symbol EURUSDm --years 2 --balance 10000
-
-# Backtest from CSV (columns: time,open,high,low,close; time as ISO or epoch seconds)
-python -m backtest.backtest --csv-ltf data/xauusd_m15.csv --csv-htf data/xauusd_h4.csv --symbol XAUUSDm
 ```
-
-There is no test suite, linter, or build step. Backtesting **is** the validation workflow — run `backtest/backtest.py` (via `python -m backtest.backtest`) to check a strategy or config change end-to-end.
-
-Backtest models **trading costs** (spread round-trip, overnight swap with Wednesday triple-swap, optional commission) per-symbol from `config/config.py` (`spread_points`, `commission_per_lot`, `swap_long/short_per_lot`); costs are charged per fill (partials included, pro-rata by lot) so PF/winrate/CAGR are net-of-cost. Add `--no-costs` to see gross. Defaults are conservative Standard-account estimates — tune to your broker.
-
-### Scalping M5 stream (independent, separate process)
-
-A fully independent scalping strategy — single-timeframe M5, EMA trend-pullback + RSI +
-ATR SL/TP — lives in `config/scalp_config.py`/`strategy/scalp_strategy.py`/
-`backtest/scalp_backtest.py`/`execution/scalp_main.py`. It shares NOTHING with the SMC
-bot above (own magic numbers, own journal files `scalp_trades_<symbol>.csv`, own risk
-%). See `docs/superpowers/specs/2026-07-31-scalp-m5-design.md` for the full design.
 
 ```bash
-# Backtest
-python -m backtest.scalp_backtest --from-mt5 --symbol XAUUSDm --years 2 --balance 10000
+# Data (Dukascopy M1 → cache; ~1,300 files/hour because the server throttles; resumable)
+python -m datafeed.dukascopy --symbol XAUUSDm
+python -m datafeed.bars --symbol XAUUSDm          # build M15/H1/H4/D1 cache
+python -m datafeed.crosscheck --symbol XAUUSDm    # vs Exness MT5, Jul 2024–Sep 2025 only
 
-# Live/demo (dry_run=True by default in config/scalp_config.py)
-python -m execution.scalp_main --symbol XAUUSDm
-python -m execution.scalp_main --symbols EURUSDm,GBPUSDm
+# Harness self-check — run after ANY change to backtest/, risk.manage_step, config costs
+python -m backtest.selftest
+
+# Walk-forward + Acceptance Gate for a Candidate in strategy/candidates/<name>.py (exports CANDIDATE)
+python -m backtest.walkforward --candidate c1_donchian
+
+# Bake-off: every Candidate through the gate, table by name (no ranking); never runs the holdout
+python -m backtest.bakeoff
+
+# Final Holdout: preflight only; --confirm spends it (ONCE per Candidate, writes holdout/<name>.json, commit it)
+python -m backtest.holdout --candidate c1_donchian
 ```
 
-Can run alongside `execution.main` in a separate process on the same MT5 terminal — see the
-spec's "Rủi ro cần xác minh" section before relying on this in live trading.
-Untuned baseline (measured 2026-07-31, see `config/scalp_config.py` header) is **net-losing on
-all 3 symbols** (PF 0.69–0.84) — deep parameter tuning is a separate follow-up, not yet
-done.
+```bash
+# Live loop (step 7): only Strategies that passed the Final Holdout; params come from holdout/<name>.json
+python -m execution.live --strategy c1_donchian             # DRY: logs signals, places nothing
+python -m execution.live --strategy c1_donchian --execute   # places orders; refuses non-demo accounts
+```
+
+`backtest/selftest.py` is the test suite (no pytest dependency).
+
+Packages cross-import each other, so run everything with `python -m` from the repo root.
 
 ## Platform constraints
 
-- The `MetaTrader5` Python library runs **only on Windows** with an installed, logged-in MT5 terminal ("Algo Trading" enabled). `execution/mt5_client.py` guards the import (`MT5_AVAILABLE`) so the SMC/strategy modules can still be imported and backtested from CSV on any OS.
-- Broker symbol names vary (XAUUSD / GOLD / XAUUSDm...). Set the broker's name in the relevant per-symbol config in `config/config.py`, or register a new symbol config (see below).
-- `sessions` in `config/config.py` are in **MT5 server time**, not local time. Measured 2026-07-23: this Exness account's server runs **GMT+0** (many brokers are GMT+2/+3 — don't assume; probe it). So in **Vietnam time (UTC+7) = server + 7h**: gold session 08:00–17:00 → **VN 15:00–00:00**; EURUSD 13:00–18:00 → **VN 20:00–01:00**. Backtest data comes from the same server so tuning is consistent regardless. `execution/main.py` uses `server_time()` for the live gate, so the machine's own timezone is irrelevant — only keep it powered during those VN windows.
+- The `MetaTrader5` Python library runs **only on Windows** with an installed, logged-in MT5 terminal ("Algo Trading" enabled). `execution/mt5_client.py` guards the import (`MT5_AVAILABLE`) so other modules import on any OS.
+- This Exness server runs **GMT+0** (measured 2026-07-23; don't assume for other brokers). Vietnam time = server + 7h.
+- Telegram credentials come **only** from env vars `TELEGRAM_TOKEN` / `TELEGRAM_CHAT_ID`. Never put secrets in `config/config.py`.
 
-## Architecture
+## What's kept (Infrastructure)
 
-Data flows one direction: raw OHLC bars → SMC primitives → strategy decision → `TradePlan` → execution (live) or simulated fill (backtest). The same `strategy.analyze()` is the single source of truth for signals in **both** live and backtest paths — never fork signal logic between them.
+- **`config/config.py`**: `TradingConfig` holds only symbol/broker facts (price scale, measured Exness costs, magic number), risk limits, Telegram and execution settings. One instance per symbol in `CONFIGS`; `get_config(name)` resolves symbol/alias. **No strategy parameters live here.** Candidates own theirs (≤ 4, shared across symbols).
+- **`risk/risk.py`**: `TradePlan`, `calc_lot_size`, `validate_rr`, `RiskGuard` (daily loss + heat), and the shared exit engine (`PositionState`, `manage_step` for bars, `manage_tick` for live, `trade_cost` with Wednesday triple swap). Backtest and live must both use this one engine.
+- **`execution/mt5_client.py`**: thin MT5 wrapper (rates, tick, market/pending orders, `modify_sl`, `close_partial`). Only touches positions with the bot's `magic_number`.
+- **`execution/journal.py`**: per-symbol CSV trade journal (`trades_<symbol>.csv`), with a `strategy` column and `closed_r(strategy)` → [(close time, R)] for the Kill-switch.
+- **`execution/notifier.py`**: Telegram send-side notifier (`notify_alert` for Kill-switch trips, HTML-escaped).
+- **`execution/telegram_control.py`**: inbound `/status`, `/pause [name]`, `/resume [name]`. Owner private chat only (others ignored without reply), commands older than 5 min dropped, offset persisted, non-blocking `poll_once()` for the live loop. No order placement by design.
+- **`risk/killswitch.py`**: per-Strategy Kill-switch (DD ≥ 1.5× OOS max DD or 50-trade PF < 0.9, in R at 1% risk). Halt state persisted (atomic JSON under `state/`). `/resume` re-arms a halted Strategy from scratch; a merely paused one keeps its baseline. Limits come from `holdout/<name>.json` via `limits_from_holdout` (refuses Strategies that didn't pass the holdout).
+- **`execution/live.py`**: step-7 live loop. `LiveRunner` calls the same `CANDIDATE.signals()` on closed bars and mirrors `backtest/engine.py` semantics (act after bar i closes; 1 position + 1 pending per slot; OCO sibling cancelled on fill; trail/flat after bar close; pending expiry open(j)+(expiry+1)·TF; entries > 15 min late are skipped). The broker is the source of truth (re-read every tick, per-slot magic `slot_magic(base, name)`); local state under `state/`. Kill-switch, RiskGuard, Telegram control wired in. `MT5Broker` is a thin adapter; selftest drives the runner with a fake broker.
+- **`strategy/indicators.py`**: ATR, ADX, ATR percentile.
 
-- **`config/config.py`** — one `TradingConfig` dataclass (the schema) plus one **independent config instance per symbol** (`XAUUSD`, `EURUSD`) registered in `CONFIGS`. `get_config(name)` resolves a symbol/alias to a fresh copy; `execution/main.py`/`backtest/backtest.py` pass the chosen `cfg` down. Gold values are the dataclass defaults; `EURUSD` overrides the price-scale params (`price_digits`, `eq_tolerance`, `fvg_min_size_points`, `sl_buffer_points`, `min_sl_distance_points`) and has its own `magic_number`. To add a symbol: add an instance + a `CONFIGS` entry. Nothing else hardcodes strategy numbers.
-- **`strategy/smc/`** — pure, stateless analysis over a pandas OHLC DataFrame. Each module returns dataclass lists:
-  - `structure.py` — `find_swings`, `detect_structure` (BOS/CHoCH events + current trend), `current_trend_htf`. Foundation everything else references.
-  - `liquidity.py` — liquidity pools from swings, `detect_sweeps` (stop hunts), `nearest_target_pool` (liquidity-based TP).
-  - `order_blocks.py` — order blocks from structure events, optionally requiring a following imbalance (FVG).
-  - `fvg.py` — fair value gaps (3-candle imbalance).
-- **`strategy/strategy.py`** — `analyze(htf_df, ltf_df, cfg, balance, symbol_info) → TradePlan | None`. Orchestrates the SMC modules into the entry sequence (see below). Returns `None` when any condition fails.
-- **`risk/risk.py`** — `calc_lot_size` (fixed-% position sizing for 100oz contracts), `validate_rr`, `TradePlan` dataclass, and `RiskGuard` (daily-loss + portfolio-heat limits).
-- **`execution/mt5_client.py`** — thin MT5 wrapper: rates, tick, symbol info, market order, `modify_sl`, `close_partial`. Only touches bot-owned positions (filtered by `magic_number`).
-- **`execution/main.py`** — live loop: session gate → new-closed-bar gate → `analyze` → order. Also `manage_open_positions` (breakeven at 1R, partial close at 1.5R) runs every poll.
-- **`backtest/backtest.py`** — bar-by-bar replay that slices data up to each bar and calls `analyze` identically to live; simulates SL/TP/BE/partial fills.
+## Research harness
 
-## Entry sequence (the core algorithm)
-
-`strategy.analyze` only produces a signal when, in order:
-1. **H4 trend** is bullish or bearish (`neutral` → no trade).
-2. A **liquidity sweep against the trend** exists (sellside sweep before buy / buyside sweep before sell) — gated by `require_sweep`.
-3. A **CHoCH/BOS in the trend direction occurs *after* that sweep** (confirmation).
-4. Price is **retesting an OB or FVG** born from that confirmation (`entry_mode` selects which zones qualify).
-5. **SL** sits beyond the OB/sweep level + `sl_buffer_points`; **TP** is the nearest opposing liquidity pool, falling back to `tp_rr` fixed R:R if that doesn't meet `min_rr`.
-6. **R:R ≥ `min_rr`** and computed lot > 0, else no trade.
+- **`datafeed/`**: `dukascopy.py` downloads M1 (single keep-alive connection, paced, since the server throttles). `bars.py` resamples to M15/H1/H4/D1, and **`load_bars()` hides the Final Holdout (bars ending after 2025-10-01) unless `include_holdout=True`.** `crosscheck.py` compares against Exness.
+- **`strategy/candidate.py`**: the `Candidate` contract. `signals(bars, **params)` is vectorised and must be causal (row i uses bars ≤ i). The engine acts on it from bar i+1. The constructor enforces the ≤ 4-parameter Complexity Budget.
+- **`backtest/engine.py`**: bar replay in R units (risk 1 unit per trade). Conservative fills: SL before TP, gap past SL fills at open, stop entries gap to open, no TP on a pending-order fill bar. Optional `oco_price/oco_sl/oco_tp` columns add an opposite-side pending leg; the first fill cancels the other. Optional `max_bars` is a time stop: close at the open of bar fill+max_bars (counted from the fill, also for pendings; result `TIME`); `execution/live.py` mirrors it by counting closed bars. Exits go through `risk.manage_step`.
+- **`strategy/candidates/`**: `c1_donchian` (H4 channel breakout, ATR stop + ratcheting ATR trail), `c2_orb` (M15 London/NY 08:00-local opening range, OCO stop bracket, flat 16:00 New York), `c4_smc` (M15 sweep → CHoCH → limit retest of the broken swing). Each has synthetic checks in `backtest/selftest.py`. Bake-off #2 (ADR 0002): `a_zfade` (H4 z-score fade back to the SMA, `max_bars` time stop), `b_tsmom` (D1 sign of the L-day return, Sunday stub bars excluded), `c_intramom` (H1, London-morning move → NY session, flat 16:00 New York).
+- **`backtest/bakeoff.py`**: runs every non-retired `strategy/candidates/*` through `walkforward.run` (`Candidate.retired` marks closed ones: C1/C2/C4 after Bake-off #1; the holdout refuses them; `--candidates` can still name them). Keeps every passer and never picks a "best" one. An errored Candidate means the Bake-off is NOT concluded (an error is not a fail). It only suggests the holdout command for passers.
+- **`backtest/holdout.py`**: the only sanctioned use of `include_holdout=True`. Refuses unless the walk-forward passes, the code paths are committed, the holdout data is complete, and no marker exists. The marker in `holdout/` (git-tracked, never delete or edit it) is created before results are computed. Pass bar: PF ≥ 1.0, DD ≤ 15%.
+- **`backtest/walkforward.py`**: causality check (`assert_causal`) and data-coverage check, then grid × symbols simulated once, rolling 3y→1y windows with t-stat parameter selection, stitched OOS, Acceptance Gate. The gate constants are fixed: **don't change them to let a Candidate pass.**
 
 ## Critical conventions
 
-- **No lookahead / no repaint.** Live and backtest both drop the still-forming bar (`iloc[:-1]` in `execution/main.py`, slice up to `i` in `backtest/backtest.py`). Analysis runs only on closed bars, and only once per newly closed LTF bar. Preserve this whenever touching the loops or SMC scanning windows.
-- **`dry_run` defaults to `True`.** Do not flip it as a side effect of other changes. The intended progression is backtest → dry run → demo → live.
-- SMC dataclasses carry a positional `index` into the DataFrame; keep index bookkeeping consistent when slicing (backtest passes slices, so an event's `index` is relative to the slice it was found in).
+- **No lookahead / no repaint.** Signals are computed only on closed bars. Live and backtest must call the same Strategy function; never fork signal logic between them.
+- **Never re-tune a Candidate against the Final Holdout** (Oct 2025 → Sep 2026) or after it fails the gate. See ADR 0001.
+- **`dry_run` defaults to `True`.** Do not flip it as a side effect of other changes. Nothing trades real money until a Candidate passes the Acceptance Gate and the Forward Test.
 - `magic_number` scopes which positions the bot manages; do not remove that filter.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues for ngocquang2509/gold-smc (via the `gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.

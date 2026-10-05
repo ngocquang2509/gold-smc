@@ -9,6 +9,7 @@ gây lỗi "self-signed certificate in certificate chain" dù chứng chỉ serv
 Dùng bundle CA của `certifi` (nếu có cài) thay vì kho chứng chỉ Windows để tránh lỗi này —
 KHÔNG tắt xác thực SSL.
 """
+import html
 import os
 import json
 import logging
@@ -113,3 +114,12 @@ class TelegramNotifier:
             else:
                 lines.append(f"Thua lỗ: -${abs(profit)}")
         self._send("\n".join(lines))
+
+    def notify_alert(self, strategy: str, reason: str) -> None:
+        """Kill-switch vừa dừng một Strategy. Escape HTML: lý do có ký tự '<' / '≥'."""
+        self._send(
+            f"🚨 <b>KILL-SWITCH: {html.escape(strategy)}</b>\n"
+            f"{html.escape(reason)}\n"
+            f"Ngừng vào lệnh mới; vị thế đang mở vẫn được quản lý.\n"
+            f"Mở lại bằng /resume {html.escape(strategy)} (đếm lại từ đầu)."
+        )
