@@ -156,6 +156,22 @@ class _MA(Candidate):
         return s
 
 
+def test_swap_nights():
+    print("swap (số đêm rollover):")
+    from risk.risk import _nights
+    ts = pd.Timestamp   # 2020-01-06 = Thứ Hai
+    check("trong ngày → 0 đêm", _nights(ts("2020-01-06 08:00"), ts("2020-01-06 21:00")) == 0)
+    check("T2 → T3 = 1 đêm", _nights(ts("2020-01-06 12:00"), ts("2020-01-07 12:00")) == 1)
+    check("T3 → T4 = 1 đêm (triple KHÔNG phải đêm vào thứ Tư)",
+          _nights(ts("2020-01-07 12:00"), ts("2020-01-08 12:00")) == 1)
+    check("T4 → T5 = 3 đêm (triple: rollover kết thúc thứ Tư, MT5 swap_rollover3days)",
+          _nights(ts("2020-01-08 12:00"), ts("2020-01-09 12:00")) == 3)
+    check("T6 → T2 = 1 đêm (không rollover T7/CN — cuối tuần đã trả ở thứ Tư)",
+          _nights(ts("2020-01-10 12:00"), ts("2020-01-13 12:00")) == 1)
+    check("T2 → T2 tuần sau = 7 đêm", _nights(ts("2020-01-06 12:00"), ts("2020-01-13 12:00")) == 7)
+    check("mở CN tối → T2 = 0 đêm", _nights(ts("2020-01-12 22:00"), ts("2020-01-13 12:00")) == 0)
+
+
 def test_causal_and_stats():
     print("causal & thống kê:")
     rng = np.random.default_rng(1)
@@ -873,6 +889,7 @@ if __name__ == "__main__":
     import sys
     sys.stdout.reconfigure(encoding="utf-8")   # console Windows mặc định cp1252
     test_engine()
+    test_swap_nights()
     test_causal_and_stats()
     test_c1()
     test_c2()

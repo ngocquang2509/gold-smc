@@ -97,18 +97,19 @@ def breakeven_level(state: PositionState, cfg) -> float:
 
 
 def _nights(entry_time, exit_time) -> int:
-    """Số đêm giữ lệnh (số lần bắc qua rollover 00:00 giờ server).
-    Rollover thứ Tư tính x3 (triple swap bù cuối tuần) → mỗi T4 cộng thêm 2 đêm."""
-    e0 = pd.Timestamp(entry_time).normalize()
-    e1 = pd.Timestamp(exit_time).normalize()
-    n = (e1 - e0).days
-    if n <= 0:
-        return 0
-    cur = e0
-    for _ in range(n):
-        cur += pd.Timedelta(days=1)
-        if cur.weekday() == 2:   # bắc cầu sang thứ Tư → triple swap
-            n += 2
+    """Số đêm swap tính phí = số rollover (00:00 giờ server) mà lệnh giữ qua.
+    Chỉ rollover KẾT THÚC một ngày T2–T6 mới tính phí (không có rollover T7/CN). Rollover
+    kết thúc thứ Tư tính x3 (đêm T4→T5) — trả trước cho cuối tuần. Exness: swap_rollover3days
+    = thứ Tư cho cả XAUUSDm/EURUSDm/GBPUSDm (đọc từ MT5 ngày 2026-10-05).
+    → Giữ T6→T2 = 1 đêm, giữ trọn 1 tuần = 7 đêm."""
+    day = pd.Timestamp(entry_time).normalize()
+    end = pd.Timestamp(exit_time).normalize()
+    n = 0
+    while day < end:                 # rollover lúc hết ngày `day`
+        wd = day.weekday()
+        if wd < 5:
+            n += 3 if wd == 2 else 1
+        day += pd.Timedelta(days=1)
     return n
 
 
