@@ -112,4 +112,5 @@ CANDIDATE = StrippedSMC(
         "setup_age": [16, 48],           # 4h / 12h trên M15
         "target_r": [1.5, 2.5, 4.0],
     },
+    retired="Bake-off #1 2026-10-04: trượt walk-forward (ADR 0001 Outcomes)",
 )

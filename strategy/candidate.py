@@ -19,6 +19,11 @@ Cột tùy chọn (để quản lý vị thế đang mở):
   flat         True → đóng vị thế tại open bar kế (vd hết phiên)
 Cột tùy chọn (lệnh chờ 2 chân OCO, chân kia NGƯỢC hướng signal, cùng entry_type/expiry):
   oco_price, oco_sl, oco_tp   NaN → không có chân thứ hai. Chân khớp trước hủy chân kia.
+Cột tùy chọn (time stop):
+  max_bars     đóng tại open bar khớp+max_bars nếu vị thế còn mở (NaN/0 = tắt)
+
+`retired`: Candidate đã ĐÓNG (trượt Bake-off) — Bake-off mặc định bỏ qua, Final Holdout từ
+chối. Không tune lại, không thêm filter (ADR 0001). Code + selftest giữ lại để tham khảo.
 """
 from dataclasses import dataclass, field
 
@@ -35,6 +40,7 @@ class Candidate:
     timeframe: str                                 # khung bar chạy: "M15" | "H1" | "H4" | "D1"
     param_grid: dict = field(default_factory=dict)  # tên tham số → danh sách giá trị thử
     uses_be_partial: bool = False                  # dùng breakeven/partial của risk.manage_step?
+    retired: str | None = None                     # lý do đóng (vd "Bake-off #1 2026-10-04: trượt")
 
     def __post_init__(self):
         if len(self.param_grid) > MAX_PARAMS:

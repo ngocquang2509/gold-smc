@@ -46,4 +46,5 @@ CANDIDATE = DonchianTrend(
         "stop_atr": [2.0, 3.0],
         "trail_atr": [3.0, 4.0, 6.0],
     },
+    retired="Bake-off #1 2026-10-04: trượt walk-forward (ADR 0001 Outcomes)",
 )

@@ -82,6 +82,32 @@ def test_engine():
     tr = simulate(b, s, CFG0)
     check("flat → đóng tại open bar kế (+0.5R)", abs(tr.r[0] - 0.5) < 1e-9 and tr.result[0] == "FLAT")
 
+    # max_bars: market khớp bar 1, giữ đủ 2 bar (1, 2) → đóng tại open bar 3 = 100.5 → +0.5R
+    b = _bars([[100, 100, 100, 100], [100, 100.5, 99.5, 100.2], [100.2, 100.6, 99.8, 100.4],
+               [100.5, 100.6, 100.4, 100.5], [100, 100, 100, 100]])
+    tr = simulate(b, _sig(b, 0, sl=99.0, tp=float("nan"), max_bars=2), CFG0)
+    check("max_bars=2: đóng tại open bar fill+2 (+0.5R, TIME)",
+          len(tr) == 1 and tr.exit_time[0] == b.index[3] and abs(tr.r[0] - 0.5) < 1e-9 and tr.result[0] == "TIME")
+    # Lệnh chờ: đếm từ bar KHỚP (bar 2), không phải từ bar đặt lệnh → đóng tại open bar 4
+    b = _bars([[100, 100, 100, 100], [100, 100.5, 99.8, 100.2], [100.2, 101.5, 100.1, 101.2],
+               [101.2, 101.6, 100.9, 101.4], [101.5, 101.6, 101.4, 101.5], [101, 101, 101, 101]])
+    tr = simulate(b, _sig(b, 0, entry_type="stop", entry_price=101.0, sl=100.0, tp=float("nan"),
+                          expiry=5, max_bars=2), CFG0)
+    check("max_bars đếm từ bar khớp lệnh chờ (fill bar 2 → đóng open bar 4)",
+          len(tr) == 1 and tr.exit_time[0] == b.index[4] and abs(tr.r[0] - 0.5) < 1e-9 and tr.result[0] == "TIME")
+    # SL trong thời hạn thắng time stop
+    b = _bars([[100, 100, 100, 100], [100, 100.5, 99.5, 100.2], [100.2, 100.3, 98.5, 99],
+               [99, 99, 99, 99]])
+    tr = simulate(b, _sig(b, 0, sl=99.0, tp=float("nan"), max_bars=2), CFG0)
+    check("SL trước hạn max_bars → SL, không TIME", len(tr) == 1 and tr.result[0] == "SL/BE")
+    # max_bars 0 / NaN = tắt → giống hệt không có cột
+    b = _bars([[100, 100.5, 99.5, 100]] * 8)
+    base = simulate(b, _sig(b, 0, sl=99.0, tp=float("nan")), CFG0)
+    off0 = simulate(b, _sig(b, 0, sl=99.0, tp=float("nan"), max_bars=0), CFG0)
+    offn = simulate(b, _sig(b, 0, sl=99.0, tp=float("nan"), max_bars=float("nan")), CFG0)
+    check("max_bars 0/NaN = tắt (giống không có cột)", base.equals(off0) and base.equals(offn)
+          and base.result[0] == "EOD")
+
     # OCO: buy stop 101 / sell stop 99 (SL mỗi chân = giá chân kia, TP ±2)
     oco = dict(entry_type="stop", entry_price=101.0, sl=99.0, tp=103.0, expiry=10,
                oco_price=99.0, oco_sl=101.0, oco_tp=97.0)
@@ -353,6 +379,11 @@ def test_holdout():
         check("chưa qua walk-forward → từ chối",
               _refused(ho.preflight, cand, ["X"], marker_dir=d, require_clean=False))
 
+        ho.wf.run = boom
+        closed = _MA("ma_closed", "H1", {"n": [5]}, retired="Bake-off #1")
+        check("Candidate đã đóng → từ chối TRƯỚC khi chạy walk-forward",
+              _refused(ho.preflight, closed, ["X"], marker_dir=d, require_clean=False))
+
         # Đường chạy đủ trên dữ liệu tổng hợp 2022-09 → 2026-09 (H1).
         rng = np.random.default_rng(7)
         idx = pd.date_range("2022-09-01", "2026-09-30 23:00", freq="1h")
@@ -397,7 +428,10 @@ def test_bakeoff():
     from pathlib import Path
     from backtest import bakeoff as bk
     print("Bake-off:")
-    check("tìm thấy đủ Candidate c1/c2/c4", {"c1_donchian", "c2_orb", "c4_smc"} <= set(bk.discover()))
+    every = bk.discover(include_retired=True)
+    check("tìm thấy đủ Candidate c1/c2/c4 (kể cả đã đóng)", {"c1_donchian", "c2_orb", "c4_smc"} <= set(every))
+    check("Bake-off mặc định bỏ Candidate đã đóng (C1/C2/C4 sau Bake-off #1)",
+          not {"c1_donchian", "c2_orb", "c4_smc"} & set(bk.discover()))
 
     with tempfile.TemporaryDirectory() as d:
         d = Path(d)
@@ -689,7 +723,7 @@ def test_live_loop():
 
         def signals(self, b, **kw):
             s = empty_signals(b.index)
-            for col in ("oco_price", "oco_sl", "oco_tp", "trail_long", "trail_short"):
+            for col in ("oco_price", "oco_sl", "oco_tp", "trail_long", "trail_short", "max_bars"):
                 s[col] = nan
             s["flat"] = False
             for at, vals in self.table.items():
@@ -751,6 +785,35 @@ def test_live_loop():
     br.k = 11
     run.step()
     check("flat hàng 10 → đóng vị thế", not br.pos and br.calls[-1] == ("close", buy_leg))
+
+    # max_bars: market khớp trong bar 10 → đóng khi bar 10, 11 đã đóng (= open bar 12, như engine).
+    run, br, *_ = rig({t[9]: {"signal": 1, "sl": 95.0, "max_bars": 2}})
+    run.step()
+    br.k = 11
+    run.step()
+    check("max_bars=2: sau 1 bar vẫn giữ vị thế", len(br.pos) == 1)
+    br.k = 12
+    run.step()
+    check("max_bars=2: đóng tại open bar khớp+2", not br.pos and br.calls[-1][0] == "close")
+    # Lệnh chờ: đếm từ bar KHỚP (khớp trong bar 11 → đóng tại open bar 13).
+    run, br, *_ = rig({t[9]: {"signal": 1, "entry_type": "stop", "entry_price": 102.0, "sl": 98.0,
+                              "expiry": 5, "max_bars": 2}})
+    run.step()
+    br.k = 11
+    br.fill(min(br.orders))
+    run.step()
+    br.k = 12
+    run.step()
+    check("max_bars lệnh chờ: chưa đóng ở open bar khớp+1", len(br.pos) == 1)
+    br.k = 13
+    run.step()
+    check("max_bars lệnh chờ: đóng ở open bar khớp+2", not br.pos and br.calls[-1][0] == "close")
+    # max_bars NaN → không đóng theo thời gian.
+    run, br, *_ = rig({t[9]: {"signal": 1, "sl": 95.0, "max_bars": nan}})
+    run.step()
+    br.k = 20
+    run.step()
+    check("max_bars NaN → không time stop", len(br.pos) == 1)
 
     # Lệnh chờ hết hạn (bot tự hủy dự phòng).
     run, br, *_ = rig({t[9]: {"signal": -1, "entry_type": "limit", "entry_price": 101.0, "sl": 103.0,

@@ -98,6 +98,8 @@ def _assert_holdout_coverage(symbol: str, bars: pd.DataFrame) -> None:
 def preflight(cand: Candidate, symbols=wf.SYMBOLS, marker_dir: Path = MARKER_DIR,
               require_clean: bool = True) -> dict:
     """Mọi kiểm tra trước khi tiêu holdout. Không ghi gì."""
+    if cand.retired:
+        raise SystemExit(f"{cand.name}: Candidate đã đóng ({cand.retired}) → không được dùng holdout")
     if (marker_dir / f"{cand.name}.json").exists():
         raise SystemExit(f"{cand.name}: Final Holdout ĐÃ DÙNG ({marker_dir / (cand.name + '.json')})")
     commit = _assert_clean_git() if require_clean else None

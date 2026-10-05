@@ -6,7 +6,7 @@ Bảng xếp theo TÊN, không theo PF: xếp hạng/chọn Candidate theo kết
 bước tối ưu trên chính dữ liệu OOS → số liệu của kẻ thắng bị thổi phồng.
 Không tự chạy Final Holdout — việc đó là thao tác 1 lần, tường minh (backtest.holdout).
 
-    python -m backtest.bakeoff                       # mọi module trong strategy/candidates/
+    python -m backtest.bakeoff                       # mọi Candidate CHƯA ĐÓNG trong strategy/candidates/
     python -m backtest.bakeoff --candidates c1_donchian,c2_orb
 """
 import argparse
@@ -23,8 +23,13 @@ from backtest import walkforward as wf
 from backtest.holdout import MARKER_DIR
 
 
-def discover() -> list[str]:
-    return sorted(m.name for m in pkgutil.iter_modules(strategy.candidates.__path__))
+def discover(include_retired: bool = False) -> list[str]:
+    """Candidate đã đóng (CANDIDATE.retired) bị bỏ trừ khi include_retired hoặc gọi tên qua --candidates."""
+    names = sorted(m.name for m in pkgutil.iter_modules(strategy.candidates.__path__))
+    if include_retired:
+        return names
+    return [n for n in names
+            if not importlib.import_module(f"strategy.candidates.{n}").CANDIDATE.retired]
 
 
 def holdout_status(name: str, marker_dir: Path = MARKER_DIR) -> str:
@@ -85,7 +90,7 @@ def main():
     sys.stdout.reconfigure(encoding="utf-8")   # console Windows mặc định cp1252
     sys.stderr.reconfigure(encoding="utf-8")   # thông báo SystemExit đi qua stderr
     p = argparse.ArgumentParser(description="Bake-off: mọi Candidate qua walk-forward Acceptance Gate")
-    p.add_argument("--candidates", help="danh sách module, mặc định: tất cả trong strategy/candidates/")
+    p.add_argument("--candidates", help="danh sách module, mặc định: mọi Candidate chưa đóng")
     a = p.parse_args()
     names = a.candidates.split(",") if a.candidates else discover()
     rows = run_bakeoff(names)

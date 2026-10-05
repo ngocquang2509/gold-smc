@@ -75,4 +75,5 @@ CANDIDATE = OpeningRangeBreakout(
         "k": [1.0, 1.5, 2.0, 3.0],
         "session": ["london", "ny"],
     },
+    retired="Bake-off #1 2026-10-04: trượt walk-forward (ADR 0001 Outcomes)",
 )

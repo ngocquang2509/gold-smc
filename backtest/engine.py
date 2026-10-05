@@ -13,6 +13,9 @@ Quy tắc khớp (bảo thủ, ghi nhận để không ai "sửa" cho đẹp s�
   - Bar khớp lệnh chờ: chỉ xét SL (không xét TP) — không biết thứ tự trong bar.
   - Còn lại dùng risk.manage_step: SL trước TP, SL gap → khớp open (lỗ > 1R).
   - Mỗi symbol tối đa 1 vị thế + 1 lệnh chờ; tín hiệu mới trong lúc đó bị bỏ qua.
+  - max_bars (cột tùy chọn, NaN/0 = tắt): vị thế còn mở sau max_bars bar tính từ bar
+    KHỚP (lệnh chờ đếm từ lúc khớp, không phải lúc đặt) → đóng tại open bar khớp+max_bars
+    ("TIME"). SL/TP/flat trước hạn vẫn thắng.
   - OCO (cột oco_*): 2 chân lệnh chờ ngược hướng, chân khớp trước hủy chân kia. Cả 2
     cùng chạm trong 1 bar → lấy chân gần open hơn (SL của nó thường là chân kia →
     bị SL ngay trên bar khớp → -1R, tức tự động bảo thủ).
@@ -49,6 +52,7 @@ def simulate(bars: pd.DataFrame, sig: pd.DataFrame, cfg: TradingConfig,
     tr_long = sig["trail_long"].to_numpy(float) if "trail_long" in sig else None
     tr_short = sig["trail_short"].to_numpy(float) if "trail_short" in sig else None
     flat = sig["flat"].to_numpy(bool) if "flat" in sig else None
+    s_mb = sig["max_bars"].to_numpy(float) if "max_bars" in sig else None
     oco = (tuple(sig[k].to_numpy(float) for k in ("oco_price", "oco_sl", "oco_tp"))
            if "oco_price" in sig else None)
     cs = cfg.contract_size
@@ -57,8 +61,9 @@ def simulate(bars: pd.DataFrame, sig: pd.DataFrame, cfg: TradingConfig,
     trades: list[dict] = []
     pos: PositionState | None = None
     pos_rows: list[dict] = []
-    pending = None          # (legs [(direction, price, sl, tp)], kind, expires_at_index)
+    pending = None          # (legs [(direction, price, sl, tp)], kind, expires_at_index, max_bars)
     flat_next = False
+    close_at = n            # chỉ số bar mà vị thế hiện tại bị đóng theo max_bars (n = không)
     signal_idx = np.flatnonzero(s_sig != 0)
 
     def open_pos(direction, entry, sl, tp, i):
@@ -68,6 +73,10 @@ def simulate(bars: pd.DataFrame, sig: pd.DataFrame, cfg: TradingConfig,
         return PositionState(direction=direction, entry=entry, sl=sl, original_sl=sl,
                              tp=tp if not np.isnan(tp) else (INF if direction == "buy" else -INF),
                              lot=1.0 / (dist * cs), cs=cs, entry_time=t[i])
+
+    def mb(j) -> int:
+        v = s_mb[j] if s_mb is not None else float("nan")
+        return int(v) if v == v and v > 0 else 0
 
     def close_trade(rows, state, exit_px, i, result_override=None):
         r = sum(row["pnl"] for row in rows)
@@ -93,6 +102,7 @@ def simulate(bars: pd.DataFrame, sig: pd.DataFrame, cfg: TradingConfig,
             if s_type[j] == "market":
                 pos = open_pos(direction, o[i], s_sl[j], s_tp[j], i)
                 pos_rows = []
+                close_at = i + mb(j) if mb(j) else n
                 if pos is None:
                     i += 1
                     continue
@@ -101,11 +111,11 @@ def simulate(bars: pd.DataFrame, sig: pd.DataFrame, cfg: TradingConfig,
                 legs = [(direction, s_px[j], s_sl[j], s_tp[j])]
                 if oco is not None and not np.isnan(oco[0][j]):
                     legs.append(("sell" if direction == "buy" else "buy", oco[0][j], oco[1][j], oco[2][j]))
-                pending = (legs, s_type[j], i + max(s_exp[j], 1))
+                pending = (legs, s_type[j], i + max(s_exp[j], 1), mb(j))
 
         fill_bar_pending = False
         if pending is not None:
-            legs, kind, expires = pending
+            legs, kind, expires, pend_mb = pending
             if i >= expires:
                 pending = None
                 continue
@@ -127,17 +137,18 @@ def simulate(bars: pd.DataFrame, sig: pd.DataFrame, cfg: TradingConfig,
             pending = None
             pos = open_pos(direction, fill, sl, tp, i)
             pos_rows = []
+            close_at = i + pend_mb if pend_mb else n
             if pos is None:
                 i += 1
                 continue
             fill_bar_pending = True
 
         # ── Quản lý vị thế trên bar i ─────────────────────
-        if flat_next:
-            flat_next = False
+        if flat_next or i >= close_at:
             cost = trade_cost(pos, t[i], pos.lot, cfg) if apply_costs else 0.0
             pnl = position_pnl(pos, o[i]) - cost
-            pos_rows.append({"pnl": pnl, "cost": cost, "result": "FLAT"})
+            pos_rows.append({"pnl": pnl, "cost": cost, "result": "FLAT" if flat_next else "TIME"})
+            flat_next = False
             close_trade(pos_rows, pos, o[i], i)
             pos = None
             i += 1

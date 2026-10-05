@@ -9,10 +9,13 @@ thực thi theo đúng ngữ nghĩa của backtest/engine.py (live ≡ backtest)
   - trail_long/trail_short của hàng i dời SL (chỉ theo hướng có lợi) sau khi i đóng;
     mức trail đã vượt giá hiện tại → đóng ngay (engine: gap qua SL → khớp open).
   - flat[i] → đóng vị thế sau khi i đóng.
+  - max_bars (của hàng tín hiệu vào lệnh) → đóng khi đã có max_bars bar ĐÓNG tính từ bar
+    khớp (gồm bar khớp) = open bar khớp+max_bars. Đếm BAR, không đếm giờ (cuối tuần).
   - Lệnh chờ hết hạn tại open(j) + (expiry+1)·TF (broker tự hủy + bot tự hủy dự phòng).
 
 Broker là nguồn sự thật: vị thế/lệnh chờ đọc lại từ MT5 mỗi nhịp (lọc theo magic RIÊNG
-của slot). Trạng thái cục bộ chỉ gồm bar đã xử lý + giờ hết hạn lệnh chờ (state/, gitignore).
+của slot). Trạng thái cục bộ chỉ gồm bar đã xử lý, giờ hết hạn lệnh chờ và bar khớp + max_bars
+của vị thế đang mở (state/, gitignore).
 
 An toàn:
   - Chỉ chạy Strategy đã QUA Final Holdout (tham số đóng băng lấy từ holdout/<name>.json).
@@ -57,6 +60,7 @@ class Pos:
     sl: float
     tp: float               # NaN = không TP
     lot: float
+    opened: pd.Timestamp | None = None   # giờ khớp (giờ server); None → lấy giờ lúc thấy lần đầu
 
 
 def slot_magic(base: int, strategy: str) -> int:
@@ -87,6 +91,7 @@ class Slot:
         self.state_path = Path(state_dir) / f"live_{self.name}_{self.symbol}.json"
         self.state = (json.loads(self.state_path.read_text(encoding="utf-8"))
                       if self.state_path.exists() else {"last_bar": None, "pending": {}})
+        self.state.setdefault("fills", {})      # ticket → {"bar": bar khớp, "max_bars": n}
 
     def save(self) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -156,7 +161,7 @@ class LiveRunner:
 
         positions = b.positions()
         for p in positions:
-            self._manage(slot, p, row)
+            self._manage(slot, p, row, bars)
         if int(row["signal"]) != 0 and not positions and not b.pending():
             if now - forming_open > MAX_ENTRY_LAG:
                 log.warning(f"{slot.name} {slot.symbol}: tín hiệu bar {last} đã trễ "
@@ -167,10 +172,15 @@ class LiveRunner:
         slot.save()
 
     # ── Quản lý vị thế (trail / flat) ─────────────────────
-    def _manage(self, slot: Slot, p: Pos, row) -> None:
+    def _manage(self, slot: Slot, p: Pos, row, bars: pd.DataFrame) -> None:
         b = slot.broker
         if bool(row.get("flat", False)):
             log.info(f"{slot.name} {slot.symbol}: hết phiên → đóng #{p.ticket}")
+            b.close(p.ticket)
+            return
+        fill = slot.state["fills"].get(str(p.ticket))
+        if fill and fill["max_bars"] and (bars.index >= pd.Timestamp(fill["bar"])).sum() >= fill["max_bars"]:
+            log.info(f"{slot.name} {slot.symbol}: đủ {fill['max_bars']} bar từ lúc khớp → đóng #{p.ticket}")
             b.close(p.ticket)
             return
         is_buy = p.direction == "buy"
@@ -228,6 +238,8 @@ class LiveRunner:
                 return
 
         expires = pending_expiry(signal_bar, slot.cand.timeframe, row["expiry"])
+        mb = row.get("max_bars")
+        slot.state["next_max_bars"] = 0 if _nan(mb) or mb <= 0 else int(mb)
         for d, entry, sl, tp, lot in plans:
             what = (f"{kind.upper()} {d.upper()} {lot} @ {entry} SL {sl} TP {tp}"
                     + ("" if kind == "market" else f" (hết hạn {expires})"))
@@ -236,6 +248,9 @@ class LiveRunner:
                 continue
             if kind == "market":
                 t = b.place_market(d, lot, sl, tp, comment=name)
+                if t:   # khớp ngay trong bar đang hình thành
+                    slot.state["fills"][str(t)] = {"bar": str(b.now().floor(TIMEFRAMES[slot.cand.timeframe])),
+                                                   "max_bars": slot.state["next_max_bars"]}
             else:
                 t = b.place_pending(d, kind, lot, entry, sl, tp, expires, comment=name)
                 if t:
@@ -251,7 +266,12 @@ class LiveRunner:
     def _sync_opened(self, slot: Slot, positions: list[Pos]) -> None:
         """Vị thế mới thấy lần đầu → ghi nhật ký. SL lúc này là SL GỐC (trail chỉ dời sau khi
         bar đóng, và nhịp nào cũng đồng bộ trước khi quản lý) → risk_amount = 1R thật."""
+        tf = TIMEFRAMES[slot.cand.timeframe]
         for p in positions:
+            if str(p.ticket) not in slot.state["fills"]:
+                opened = p.opened if p.opened is not None else slot.broker.now()
+                slot.state["fills"][str(p.ticket)] = {"bar": str(pd.Timestamp(opened).floor(tf)),
+                                                      "max_bars": slot.state.get("next_max_bars", 0)}
             if slot.journal.has(p.ticket):
                 continue
             risk = round(abs(p.entry - p.sl) * p.lot * slot.cfg.contract_size, 2)
@@ -264,6 +284,7 @@ class LiveRunner:
 
     def _sync_closed(self, slot: Slot) -> None:
         live = {str(p.ticket) for p in slot.broker.positions()}
+        slot.state["fills"] = {k: v for k, v in slot.state["fills"].items() if k in live}
         for rec in slot.journal.open_records():
             if rec.get("strategy") != slot.name or rec["ticket"] in live:
                 continue
@@ -303,7 +324,8 @@ class MT5Broker:
         out = []
         for p in self.client.open_positions():
             out.append(Pos(p.ticket, "buy" if p.type == self.mt5.POSITION_TYPE_BUY else "sell",
-                           p.price_open, p.sl, p.tp if p.tp else float("nan"), p.volume))
+                           p.price_open, p.sl, p.tp if p.tp else float("nan"), p.volume,
+                           pd.Timestamp(p.time, unit="s")))   # epoch giờ server (GMT+0)
         return out
 
     def pending(self) -> list[int]:
