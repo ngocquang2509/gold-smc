@@ -24,7 +24,7 @@ Costs are stressed (×1.5), as a share of ATR, using 2016 and 2024 median ATR as
 - `z = (close − SMA(n)) / ATR(14)`. Buy at the next open on the **first** bar where z ≤ −k (the bar before had z > −k), sell on the first bar where z ≥ +k. It is an event, not a level: after a stop or time stop it does not re-enter while the price is still stretched.
 - Stop `m × ATR(14)` from the signal close, no TP. `flat` on the first close that crosses back over the SMA. Time stop `max_bars`.
 - No trend filter (it would cost the fourth parameter, and the usual choice is borrowed from tuned literature).
-- **Grid (72):** `n ∈ {10, 20, 40}`, `k ∈ {1.5, 2.0, 2.5}`, `m ∈ {2, 3}`, `max_bars ∈ {6, 12}`.
+- **Grid (36):** `n ∈ {10, 20, 40}`, `k ∈ {1.5, 2.0, 2.5}`, `m ∈ {2, 3}`, `max_bars ∈ {6, 12}`.
 - **Cost:** spread 0.01–0.03R. Swap for a gold long 0.02–0.06R per night; worst case (2016, m = 2, held through the Wednesday triple) ≈ 0.23R. Shorts on gold and EURUSD pay no swap.
 
 ### B: `b_tsmom`, D1 time-series momentum
@@ -50,3 +50,7 @@ Costs are stressed (×1.5), as a share of ATR, using 2016 and 2024 median ATR as
 - **Volatility-compression breakout (NR7 / low ATR percentile):** rejected. It is too close to the C1/C2 breakout family that just failed.
 - **Fixed-direction seasonality** (e.g. gold drifts up in session X): rejected, because it breaks the symmetry rule.
 - **Weekly evaluation for B:** rejected. Fewer trades, in a Candidate already at risk on trade count.
+
+## Smoke test (2026-10-05, data cut at 2022-08-31, counts only)
+
+Causality held on real bars for all three Candidates and all three symbols; no mechanical bug was found. One documentation fix: A's grid was written as 72 points but is 3 × 3 × 2 × 2 = 36 (the values were always the agreed ones). Estimated out-of-sample trades pooled over 8.75 years: A 549–2,409, C 836–6,746, B 153–302 (6 of 9 grid points under 200, the known risk; not redesigned). B's sign rule flips often, so its median hold is 7–9 days and 94% of exits are flips.
