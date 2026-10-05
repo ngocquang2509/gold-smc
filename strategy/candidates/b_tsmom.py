@@ -46,4 +46,5 @@ CANDIDATE = TSMomentum(
         "lookback": [60, 120, 250],      # ngày giao dịch: ~3 / 6 / 12 tháng
         "stop_atr": [3.0, 4.0, 6.0],
     },
+    retired="Bake-off #2 2026-10-05: trượt walk-forward (ADR 0002 Outcomes)",
 )

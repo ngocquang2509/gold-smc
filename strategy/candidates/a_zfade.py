@@ -48,4 +48,5 @@ CANDIDATE = ZFade(
         "stop_atr": [2.0, 3.0],
         "max_bars": [6, 12],             # 1 / 2 ngày giao dịch
     },
+    retired="Bake-off #2 2026-10-05: trượt walk-forward (ADR 0002 Outcomes)",
 )

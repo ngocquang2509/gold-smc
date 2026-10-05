@@ -54,3 +54,18 @@ Costs are stressed (×1.5), as a share of ATR, using 2016 and 2024 median ATR as
 ## Smoke test (2026-10-05, data cut at 2022-08-31, counts only)
 
 Causality held on real bars for all three Candidates and all three symbols; no mechanical bug was found. One documentation fix: A's grid was written as 72 points but is 3 × 3 × 2 × 2 = 36 (the values were always the agreed ones). Estimated out-of-sample trades pooled over 8.75 years: A 549–2,409, C 836–6,746, B 153–302 (6 of 9 grid points under 200, the known risk; not redesigned). B's sign rule flips often, so its median hold is 7–9 days and 94% of exits are flips.
+
+## Outcomes
+
+- **2026-10-05, Bake-off #2: 0/3 passed** (`reports/bakeoff-20261005-211229.json`, gitignored; numbers recorded here). Walk-forward OOS 2017 → Sep 2025, costs ×1.5, run on c730a77:
+
+  | Candidate | OOS PF | Max DD @ 1% | Profitable windows | OOS trades |
+  |---|---|---|---|---|
+  | `a_zfade` H4 z-fade | 0.94 | 61.0% | 4/9 | 1,656 |
+  | `b_tsmom` D1 momentum | 0.73 | 24.5% | 3/9 | 227 |
+  | `c_intramom` H1 session momentum | 0.84 | 74.3% | 5/9 | 1,477 |
+
+  As in Bake-off #1, the selected grid point's in-sample t-stat stayed between about 0 and 1.5 in every window, so no grid point had an Edge to select. Trade counts matched the smoke test. **Trial Count stays at 6, with 0 passes.** The Final Holdout was **not** used. All three are now Retired Candidates. These readings are rejected as post-hoc selection:
+  - `c_intramom` with k fixed at 0.5: the 2024 window switched to k = 0 and lost 103R, and that instability is what the gate exists to catch.
+  - `a_zfade` on EURUSD/GBPUSD only: gold was −67R.
+- **Decision (2026-10-05): stop here.** Six Candidates across breakout, structure, mean reversion and momentum showed no in-sample signal on these three symbols at Exness costs. The bot stays in dry run with the Infrastructure kept ready. A Bake-off #3 is only worth running with a genuinely new information source (e.g. cross-asset or calendar data, which needs a new data pipeline first), not more rules on the same bars.

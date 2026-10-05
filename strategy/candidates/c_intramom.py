@@ -72,4 +72,5 @@ CANDIDATE = IntradayMomentum(
         "k": [0.0, 0.25, 0.5],           # ngưỡng biến động sáng, đơn vị ATR D1
         "stop_atr": [2.0, 3.0],
     },
+    retired="Bake-off #2 2026-10-05: trượt walk-forward (ADR 0002 Outcomes)",
 )
