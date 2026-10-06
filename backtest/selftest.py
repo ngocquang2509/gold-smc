@@ -592,6 +592,129 @@ def test_auxdata():
     check("assert_causal cắt cả aux: nhìn trộm aux tương lai bị bắt", caught)
 
 
+def test_sign_flips():
+    from strategy.indicators import sign_flips
+    print("sign_flips:")
+    z = pd.Series([np.nan, 1.0, 2.0, 0.0, -1.0, 0.0, -2.0, 3.0])
+    check("+ → 0 → − là 1 lần đổi; 0 và NaN không tạo lần đổi",
+          list(sign_flips(z)) == [False, False, False, False, True, False, False, True])
+
+
+def _usd_world(n=3000, seed=7, freq="4h", drift=0.0, resid_theta=None):
+    """Symbol XXX/USD = 1/USD5 × phần riêng: USD5 đi bộ ngẫu nhiên (+drift), phần riêng là
+    đi bộ ngẫu nhiên hoặc OU (resid_theta). Trả về (bars, aux)."""
+    rng = np.random.default_rng(seed)
+    lu = (rng.standard_normal(n) * 0.004 + drift).cumsum()
+    if resid_theta is None:
+        le = (rng.standard_normal(n) * 0.002).cumsum()
+    else:
+        le = np.zeros(n)
+        for i in range(1, n):
+            le[i] = le[i - 1] * (1 - resid_theta) + rng.standard_normal() * 0.004
+    idx = pd.date_range("2020-01-01", periods=n, freq=freq)
+    c = 100 * np.exp(-lu + le)
+    o = np.concatenate([[c[0]], c[:-1]])
+    b = pd.DataFrame({"open": o, "high": np.maximum(o, c) * 1.001, "low": np.minimum(o, c) * 0.999,
+                      "close": c}, index=idx)
+    return b, pd.DataFrame({"USD5": 100 * np.exp(lu)}, index=idx)
+
+
+def test_d_usdtrend():
+    from strategy.candidates.d_usdtrend import ATR_PERIOD, CANDIDATE as D, usd_trend_z
+    from strategy.indicators import atr
+    print("D dollar trend:")
+    b, aux = _usd_world()
+    p = {"lookback": 30, "k": 0.5, "stop_atr": 3.0}
+    s = D.compute(b, p, aux)
+    z = usd_trend_z(aux.USD5, 30)
+    a = atr(b, ATR_PERIOD)
+    sells, buys = s.index[s.signal == -1], s.index[s.signal == 1]
+    check("USD mạnh (z ≥ k) → BÁN, USD yếu (z ≤ −k) → MUA, cả 2 phía đều có",
+          len(sells) > 50 and len(buys) > 50 and (z[sells] >= 0.5).all() and (z[buys] <= -0.5).all())
+    check("|z| < k → không tín hiệu", (s.signal[z.abs() < 0.5] == 0).all())
+    check("SL = close ∓ stop_atr·ATR(20), market, không TP",
+          np.allclose(s.sl[buys], b.close[buys] - 3 * a[buys]) and np.allclose(s.sl[sells], b.close[sells] + 3 * a[sells])
+          and s.tp.isna().all() and (s.entry_type == "market").all())
+    check("z = log-return L bar / (σ₁·√L)",
+          abs(z.iloc[-1] - np.log(aux.USD5.iloc[-1] / aux.USD5.iloc[-31])
+              / (np.log(aux.USD5).diff().iloc[-500:].std() * np.sqrt(30))) < 1e-9)
+    check("flat ở mỗi lần z đổi dấu (trễ pha: k không áp cho lối ra)", s.flat.sum() > 20)
+    assert_causal(D, b, p, aux)
+    check("D nhân quả (cả aux)", True)
+    check("3 tham số, khai báo aux USD5", len(D.param_grid) == 3 and D.aux == ["USD5"])
+    b2, aux2 = _usd_world(drift=0.002)                   # USD tăng đều → symbol giảm đều
+    tr = simulate(b2, D.compute(b2, p, aux2), CFG0)
+    check("USD tăng đều → bán chiếm ưu thế, tổng R dương",
+          len(tr) > 0 and tr.r.sum() > 0 and (tr.direction == "sell").mean() > 0.5)
+
+
+def test_e_usdresid():
+    from strategy.candidates.e_usdresid import CANDIDATE as E, residual_z
+    print("E residual fade:")
+    b, aux = _usd_world(resid_theta=0.1)
+    p = {"n": 6, "k": 2.0, "stop_atr": 2.0, "max_bars": 12}
+    s = E.compute(b, p, aux)
+    z = residual_z(b.close, aux.USD5, 6)
+    r_sym, r_usd = np.log(b.close).diff(), np.log(aux.USD5).diff()
+    beta = (r_sym.rolling(500).cov(r_usd) / r_usd.rolling(500).var()).shift(1)
+    check("β ước lượng ≈ −1 (symbol = 1/USD5 × phần riêng)", abs(beta.iloc[-1] + 1) < 0.15)
+    longs, shorts = s.index[s.signal == 1], s.index[s.signal == -1]
+    check("mua = bar ĐẦU TIÊN z ≤ −k, bán = bar đầu tiên z ≥ +k (sự kiện)",
+          len(longs) > 5 and len(shorts) > 5 and (z[longs] <= -2).all() and (z.shift()[longs] > -2).all()
+          and (z[shorts] >= 2).all() and (z.shift()[shorts] < 2).all())
+    check("flat khi z cắt 0; max_bars trên mọi hàng", s.flat.sum() > 50 and (s.max_bars == 12).all())
+    own = (np.log(b.close / 100) + np.log(aux.USD5 / 100)).diff().rolling(6).sum()   # phần riêng thật
+    usd = np.log(aux.USD5).diff().rolling(6).sum()
+    ok = z.notna()
+    check("z bám phần RIÊNG của symbol (corr > 0.9), bỏ qua phần USD (|corr| < 0.2)",
+          z[ok].corr(own[ok]) > 0.9 and abs(z[ok].corr(usd[ok])) < 0.2)
+    assert_causal(E, b, p, aux)
+    check("E nhân quả (cả aux, β cuộn)", True)
+    check("4 tham số, khai báo aux USD5", len(E.param_grid) == 4 and E.aux == ["USD5"])
+    tr = simulate(b, E.compute(b, {**p, "k": 1.5}, aux), CFG0)
+    check("phần dư hồi quy về 0 (OU) → tổng R dương; thoát chủ yếu bằng FLAT",
+          len(tr) > 20 and tr.r.sum() > 0 and {"FLAT"} <= set(tr.result))
+
+
+def test_f_realyield():
+    from strategy.candidates.f_realyield import CANDIDATE as F
+    print("F real-yield direction:")
+    rng = np.random.default_rng(8)
+    idx = pd.date_range("2016-01-01", "2020-12-31", freq="D")
+    idx = idx[idx.dayofweek != 5]                          # có mẩu Chủ Nhật
+    y = pd.Series((rng.standard_normal(len(idx)) * 0.04).cumsum(), index=idx)
+    c = 100 + (rng.standard_normal(len(idx))).cumsum()
+    o = np.concatenate([[c[0]], c[:-1]])
+    b = pd.DataFrame({"open": o, "high": np.maximum(o, c) + 0.3, "low": np.minimum(o, c) - 0.3, "close": c},
+                     index=idx)
+    aux = pd.DataFrame({"DFII10": y})
+    sun = b.index.dayofweek == 6
+    aux_mad = aux.copy()
+    aux_mad.loc[sun, "DFII10"] = 99.0                      # giá trị Chủ Nhật "điên" không được ảnh hưởng
+    p = {"lookback": 20, "k": 0.5, "stop_atr": 3.0}
+    s = F.compute(b, p, aux_mad)
+    sw = F.compute(b[~sun], p, aux[~sun])
+    check("bỏ Chủ Nhật: ngày thường y hệt khi xóa hẳn Chủ Nhật; CN không tín hiệu/flat",
+          s.loc[~sun, "signal"].equals(sw.signal) and s.loc[~sun, "flat"].equals(sw.flat)
+          and (s.signal[sun] == 0).all() and not s.flat[sun].any())
+    yw = aux.DFII10[~sun]
+    d = yw - yw.shift(20)
+    z = d / d.rolling(250).std().shift(1)
+    check("lợi suất thực tăng (z ≥ k) → BÁN, giảm → MUA",
+          (sw.signal[z >= 0.5] == -1).all() and (sw.signal[z <= -0.5] == 1).all()
+          and (sw.signal[z.abs() < 0.5] == 0).all() and (sw.signal != 0).sum() > 200)
+    assert_causal(F, b, p, aux)
+    check("F nhân quả (cả aux, qua Chủ Nhật)", True)
+    check("3 tham số, khai báo aux DFII10", len(F.param_grid) == 3 and F.aux == ["DFII10"])
+    trend = pd.Series(np.arange(len(idx)) * 0.01, index=idx)          # lợi suất thực tăng đều
+    down = b.copy()
+    down[["open", "high", "low", "close"]] = down[["open", "high", "low", "close"]].sub(
+        np.arange(len(idx)) * 0.3, axis=0) + 500
+    tr = simulate(down, F.compute(down, p, pd.DataFrame({"DFII10": trend + y * 0.1})), CFG0)
+    check("lợi suất thực tăng + giá giảm → bán, tổng R dương", len(tr) > 0 and tr.r.sum() > 0
+          and (tr.direction == "sell").mean() > 0.5)
+
+
 def _refused_any(fn, *a, **kw) -> bool:
     try:
         fn(*a, **kw)
@@ -1146,6 +1269,10 @@ if __name__ == "__main__":
     test_b_tsmom()
     test_c_intramom()
     test_auxdata()
+    test_sign_flips()
+    test_d_usdtrend()
+    test_e_usdresid()
+    test_f_realyield()
     test_holdout()
     test_bakeoff()
     test_killswitch()

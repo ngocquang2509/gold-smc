@@ -6,6 +6,7 @@ docs/superpowers/specs/2026-08-01-adx-atr-regime-filter-design.md.
 Mọi hàm đều thuần (không trạng thái, không I/O), nhận `df` đã được caller cắt
 tới hiện tại (giống mọi module smc/*) — không có rủi ro lookahead ở đây.
 """
+import numpy as np
 import pandas as pd
 
 
@@ -60,3 +61,10 @@ def atr_percentile(df: pd.DataFrame, atr_period: int, lookback: int) -> pd.Serie
     tới khi đủ cửa sổ toàn giá trị hợp lệ)."""
     atr_series = atr(df, atr_period)
     return atr_series.rolling(window=lookback, min_periods=lookback).rank(pct=True) * 100
+
+
+def sign_flips(z: pd.Series) -> pd.Series:
+    """True ở bar dấu (+/−) đổi so với dấu KHÁC 0 gần nhất trước đó (+ → 0 → − vẫn là 1 lần
+    đổi). NaN/0 không tạo lần đổi. Nhân quả: chỉ dùng z ≤ i."""
+    s = np.sign(z).replace(0, np.nan).ffill()
+    return (s != s.shift(1)) & s.notna() & s.shift(1).notna()
