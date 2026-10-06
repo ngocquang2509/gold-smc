@@ -25,7 +25,7 @@ Deferred, not in this Bake-off: the economic calendar (no free consensus, so no 
 - **Alignment by bar close.** The harness joins each series onto the Candidate's bars so that row i only sees values with `available_at_utc ≤ close(i)`. Missing publications stay missing (no forward fill that pretends a value was released).
 - **Holdout guard.** Auxiliary values observed after 2025-10-01 are hidden unless `include_holdout=True`, exactly as `load_bars()` does for prices.
 - **Contract extension.** A Candidate declares the series it needs (`aux=[...]`) and receives `signals(bars, aux, **params)`. Candidates without `aux`, including the six retired ones, are called exactly as before. `assert_causal` truncates `aux` together with `bars`.
-- **Live parity.** `execution/live.py` refreshes the store on each source's schedule and builds `aux` with the same function as the backtest.
+- **Live parity.** `execution/live.py` refreshes the store on each source's schedule and builds `aux` with the same function as the backtest. *Deferred on 2026-10-06:* the live aux provider is built only if a Candidate passes the Final Holdout, before its Forward Test. Until then the live loop refuses any Candidate that declares `aux`.
 - **Tests first:**
   - a value is invisible one second before `available_at`;
   - DST transitions on both sides;
