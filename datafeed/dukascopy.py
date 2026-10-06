@@ -36,6 +36,10 @@ INSTRUMENTS = {
     "XAUUSDm": ("XAUUSD", 1_000),
     "EURUSDm": ("EURUSD", 100_000),
     "GBPUSDm": ("GBPUSD", 100_000),
+    # Chỉ để dựng rổ USD5 (ADR 0003) — không giao dịch, nên không có hậu tố "m" của Exness.
+    "USDJPY": ("USDJPY", 1_000),
+    "USDCAD": ("USDCAD", 100_000),
+    "USDCHF": ("USDCHF", 100_000),
 }
 
 # Bản ghi nến: giây lệch từ 00:00 UTC, open, close, low, high (int giá), volume (float)
