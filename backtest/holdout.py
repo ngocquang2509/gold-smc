@@ -30,6 +30,7 @@ import pandas as pd
 from backtest import walkforward as wf
 from backtest.engine import simulate
 from config.config import COST_STRESS, get_config, stressed
+from datafeed.auxdata import build_aux
 from datafeed.bars import DATA_END, HOLDOUT_START, load_bars
 from strategy.candidate import Candidate
 
@@ -112,7 +113,9 @@ def preflight(cand: Candidate, symbols=wf.SYMBOLS, marker_dir: Path = MARKER_DIR
     bars = {s: load_bars(s, cand.timeframe, include_holdout=True) for s in symbols}
     for s, b in bars.items():
         _assert_holdout_coverage(s, b)
-    return {"params": res["combos"][best], "is_tstat": score, "bars": bars,
+    auxs = {s: build_aux(cand.aux, b.index, cand.timeframe, include_holdout=True) if cand.aux else None
+            for s, b in bars.items()}
+    return {"params": res["combos"][best], "is_tstat": score, "bars": bars, "aux": auxs,
             "commit": commit, "walkforward": res.get("summary")}
 
 
@@ -134,7 +137,8 @@ def spend(cand: Candidate, symbols, ctx: dict, marker_dir: Path = MARKER_DIR) ->
     parts = []
     for s in symbols:
         b = ctx["bars"][s]
-        tr = simulate(b, cand.signals(b, **ctx["params"]), stressed(get_config(s)), cand.uses_be_partial)
+        tr = simulate(b, cand.compute(b, ctx["params"], ctx.get("aux", {}).get(s)),
+                      stressed(get_config(s)), cand.uses_be_partial)
         tr = tr[tr["entry_time"] >= HOLDOUT_START].copy()
         tr["symbol"] = s
         parts.append(tr)

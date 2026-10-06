@@ -511,6 +511,95 @@ def test_c_intramom():
           and (tr.exit_time.dt.normalize() == tr.entry_time.dt.normalize()).all())
 
 
+def test_auxdata():
+    print("dữ liệu phụ (ADR 0003):")
+    from datafeed import auxdata as ax
+    from datafeed.bars import HOLDOUT_START
+    ts = pd.Timestamp
+    # Giờ công bố H.15: ngày làm việc Mỹ kế tiếp, 16:15 ET → UTC theo DST.
+    check("H.15 mùa đông: T2 06/01/2020 → T3 16:15 ET = 21:15 UTC",
+          ax.h15_available_at(ts("2020-01-06")) == ts("2020-01-07 21:15"))
+    check("H.15 mùa hè: → 20:15 UTC", ax.h15_available_at(ts("2020-07-07")) == ts("2020-07-08 20:15"))
+    check("H.15 thứ Sáu → thứ Hai", ax.h15_available_at(ts("2020-01-10")) == ts("2020-01-13 21:15"))
+    check("H.15 bỏ ngày lễ liên bang (03/07/2020 nghỉ bù) → 06/07",
+          ax.h15_available_at(ts("2020-07-02")) == ts("2020-07-06 20:15"))
+    check("H.15 qua đổi giờ Mỹ (T6 06/03/2020 → T2 09/03 đã là EDT) → 20:15 UTC",
+          ax.h15_available_at(ts("2020-03-06")) == ts("2020-03-09 20:15"))
+
+    # FRED/ALFRED lần công bố đầu: "." = không công bố; available_at = max(quy tắc H.15, ngày vintage 16:15 ET).
+    payload = {"observations": [
+        {"date": "2020-01-06", "value": "1.81", "realtime_start": "2020-01-07", "realtime_end": "2020-01-07"},
+        {"date": "2020-01-07", "value": "1.83", "realtime_start": "2020-01-09", "realtime_end": "2020-01-09"},
+        {"date": "2020-01-08", "value": ".", "realtime_start": "2020-01-09", "realtime_end": "2020-01-09"},
+    ]}
+    rows = ax.parse_fred(payload, "DGS10")
+    check("FRED: '.' → NaN, giá trị số giữ nguyên",
+          np.isnan(rows.value.iloc[2]) and rows.value.iloc[0] == 1.81 and rows.source.iloc[0] == "alfred:DGS10")
+    check("FRED: vintage muộn hơn quy tắc → dùng vintage (07/01 công bố 09/01 16:15 ET)",
+          rows.available_at.iloc[1] == ts("2020-01-09 21:15") and rows.available_at.iloc[0] == ts("2020-01-07 21:15"))
+
+    # Căn theo giờ ĐÓNG bar: hàng i chỉ thấy giá trị có available_at ≤ close(i).
+    idx = pd.date_range("2020-01-07 20:00", periods=4, freq="h")       # close 21:00, 22:00, 23:00, 00:00
+    a = ax.align(rows, idx, "H1")
+    check("1 giây trước available_at → chưa thấy; đúng giờ → thấy",
+          np.isnan(a.iloc[0]) and a.iloc[1] == 1.81
+          and np.isnan(ax.align(rows, pd.DatetimeIndex([ts("2020-01-07 20:14:59")]), "H1").iloc[0])
+          and ax.align(rows, pd.DatetimeIndex([ts("2020-01-07 20:15")]), "H1").iloc[0] == 1.81)
+    late = ax.align(rows, pd.DatetimeIndex([ts("2020-01-09 21:00"), ts("2020-01-10 12:00")]), "H1")
+    check("công bố thiếu ('.') không tạo giá trị; giữ giá trị THẬT gần nhất",
+          list(late) == [1.83, 1.83])
+    bad = rows.copy()
+    bad.loc[1, "available_at"] = ts("2020-01-01")
+    check("available_at đi lùi theo observation → báo lỗi (store hỏng)", _refused_any(ax.align, bad, idx, "H1"))
+
+    # Holdout: quan sát từ HOLDOUT_START bị ẩn trừ khi include_holdout.
+    hr = pd.DataFrame({"observation": [HOLDOUT_START - pd.Timedelta(days=1), HOLDOUT_START],
+                       "value": [1.0, 2.0], "source": "x",
+                       "available_at": [HOLDOUT_START, HOLDOUT_START + pd.Timedelta(days=1)]})
+    check("holdout: quan sát ≥ 2025-10-01 bị ẩn mặc định",
+          list(ax.hide_holdout(hr, False).value) == [1.0] and len(ax.hide_holdout(hr, True)) == 2)
+
+    # USD5: rổ hình học đều 5 đồng, TĂNG khi USD mạnh.
+    one = pd.Series([1.0, 1.0])
+    check("USD5: USDJPY ×32 (USD mạnh lên so với JPY) → USD5 ×2 (= 32^(1/5))",
+          np.allclose(ax.usd5_index(one, one, pd.Series([1.0, 32.0]), one, one), [1.0, 2.0]))
+    check("USD5: EURUSD giảm (USD mạnh) → tăng; USDCHF giảm (USD yếu) → giảm",
+          ax.usd5_index(pd.Series([1.0, 0.5]), one, one, one, one).is_monotonic_increasing
+          and ax.usd5_index(one, one, one, one, pd.Series([1.0, 0.5])).is_monotonic_decreasing)
+
+    # Hợp đồng: Candidate khai báo aux nhận signals(bars, aux); nhìn trộm aux tương lai bị bắt.
+    class _Aux(Candidate):
+        def signals(self, bars, aux, peek=False):
+            s = empty_signals(bars.index)
+            x = aux["X"].shift(-1) if peek else aux["X"]
+            go = (x > 0).to_numpy()
+            s.loc[go, "signal"] = 1
+            s["sl"] = bars["close"] - 1.0
+            return s
+    b = _walk(200)
+    aux = pd.DataFrame({"X": np.sin(np.arange(200) / 5)}, index=b.index)
+    cand = _Aux("aux_test", "H4", {"peek": [False]}, aux=["X"])
+    check("Candidate có aux: compute() truyền aux; thiếu aux → lỗi",
+          (cand.compute(b, {}, aux).signal > 0).sum() > 10 and _refused_any(cand.compute, b, {}))
+    check("Candidate không aux: compute() gọi signals(bars) như cũ",
+          _MA("ma", "H4", {"n": [5]}).compute(b, {"n": 5}).equals(_MA("ma", "H4", {"n": [5]}).signals(b, n=5)))
+    assert_causal(cand, b, {"peek": False}, aux)
+    caught = False
+    try:
+        assert_causal(cand, b, {"peek": True}, aux)
+    except AssertionError:
+        caught = True
+    check("assert_causal cắt cả aux: nhìn trộm aux tương lai bị bắt", caught)
+
+
+def _refused_any(fn, *a, **kw) -> bool:
+    try:
+        fn(*a, **kw)
+    except (Exception, SystemExit):
+        return True
+    return False
+
+
 def _refused(fn, *a, **kw) -> bool:
     try:
         fn(*a, **kw)
@@ -1056,6 +1145,7 @@ if __name__ == "__main__":
     test_a_zfade()
     test_b_tsmom()
     test_c_intramom()
+    test_auxdata()
     test_holdout()
     test_bakeoff()
     test_killswitch()

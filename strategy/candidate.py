@@ -22,6 +22,11 @@ Cột tùy chọn (lệnh chờ 2 chân OCO, chân kia NGƯỢC hướng signal,
 Cột tùy chọn (time stop):
   max_bars     đóng tại open bar khớp+max_bars nếu vị thế còn mở (NaN/0 = tắt)
 
+`aux`: tên các chuỗi dữ liệu phụ (ADR 0003, datafeed.auxdata) Candidate cần. Khai báo
+aux → harness gọi `signals(bars, aux, **params)` với aux đã căn theo giờ ĐÓNG bar (hàng i
+chỉ chứa giá trị đã công bố trước close(i)). Không khai báo → `signals(bars, **params)`.
+Luôn gọi qua `compute()` để backtest, holdout và live dùng cùng một đường.
+
 `retired`: Candidate đã ĐÓNG (trượt Bake-off) — Bake-off mặc định bỏ qua, Final Holdout từ
 chối. Không tune lại, không thêm filter (ADR 0001). Code + selftest giữ lại để tham khảo.
 """
@@ -41,6 +46,7 @@ class Candidate:
     param_grid: dict = field(default_factory=dict)  # tên tham số → danh sách giá trị thử
     uses_be_partial: bool = False                  # dùng breakeven/partial của risk.manage_step?
     retired: str | None = None                     # lý do đóng (vd "Bake-off #1 2026-10-04: trượt")
+    aux: list = field(default_factory=list)        # chuỗi phụ cần (ADR 0003), vd ["USD5", "DGS10"]
 
     def __post_init__(self):
         if len(self.param_grid) > MAX_PARAMS:
@@ -50,6 +56,14 @@ class Candidate:
 
     def signals(self, bars: pd.DataFrame, **params) -> pd.DataFrame:
         raise NotImplementedError
+
+    def compute(self, bars: pd.DataFrame, params: dict, aux: pd.DataFrame | None = None) -> pd.DataFrame:
+        """Đường gọi DUY NHẤT cho backtest/holdout/live."""
+        if self.aux:
+            if aux is None or list(aux.columns) != list(self.aux) or not aux.index.equals(bars.index):
+                raise ValueError(f"{self.name}: cần aux {self.aux} căn đúng index của bars")
+            return self.signals(bars, aux, **params)
+        return self.signals(bars, **params)
 
 
 def empty_signals(index: pd.Index) -> pd.DataFrame:

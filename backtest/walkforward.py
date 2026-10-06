@@ -28,6 +28,7 @@ import pandas as pd
 
 from backtest.engine import simulate
 from config.config import COST_STRESS, get_config, stressed
+from datafeed.auxdata import build_aux
 from datafeed.bars import HOLDOUT_START, load_bars
 from strategy.candidate import Candidate
 
@@ -47,14 +48,16 @@ REPORT_DIR = Path(__file__).resolve().parent.parent / "reports"
 
 
 # ── Kiểm tra nhân quả ────────────────────────────────────
-def assert_causal(cand: Candidate, bars: pd.DataFrame, params: dict, cuts: int = 4) -> None:
+def assert_causal(cand: Candidate, bars: pd.DataFrame, params: dict, aux: pd.DataFrame | None = None,
+                  cuts: int = 4) -> None:
     """Tín hiệu tính trên dữ liệu bị cắt tại k phải TRÙNG tín hiệu tính trên toàn bộ dữ
-    liệu ở mọi hàng < k. Khác nhau = hàng cũ đã "nhìn" dữ liệu tương lai → loại."""
-    full = cand.signals(bars, **params)
+    liệu ở mọi hàng < k. Khác nhau = hàng cũ đã "nhìn" dữ liệu tương lai → loại.
+    Dữ liệu phụ (aux) bị cắt cùng chỗ với bars."""
+    full = cand.compute(bars, params, aux)
     rng = np.random.default_rng(0)
     lo = len(bars) // 4
     for k in sorted(rng.integers(lo, len(bars), size=cuts)):
-        part = cand.signals(bars.iloc[:k], **params)
+        part = cand.compute(bars.iloc[:k], params, None if aux is None else aux.iloc[:k])
         a, b = full.iloc[:k], part
         for col in part.columns:
             x, y = a[col].to_numpy(), b[col].to_numpy()
@@ -146,16 +149,17 @@ def run(cand: Candidate, symbols=SYMBOLS, stress: bool = True, verbose: bool = T
     for s, b in bars.items():
         assert_coverage(s, b)
     cfgs = {s: stressed(get_config(s)) if stress else get_config(s) for s in symbols}
+    auxs = {s: build_aux(cand.aux, b.index, cand.timeframe) if cand.aux else None for s, b in bars.items()}
     combos = _combos(cand.param_grid)
     for params in {0: combos[0], len(combos) - 1: combos[-1]}.values():
-        assert_causal(cand, bars[symbols[0]], params)
+        assert_causal(cand, bars[symbols[0]], params, auxs[symbols[0]])
 
     # Mỗi bộ tham số: lệnh gộp mọi symbol trên toàn lịch sử.
     by_combo = []
     for ci, params in enumerate(combos):
         parts = []
         for s in symbols:
-            tr = simulate(bars[s], cand.signals(bars[s], **params), cfgs[s], cand.uses_be_partial)
+            tr = simulate(bars[s], cand.compute(bars[s], params, auxs[s]), cfgs[s], cand.uses_be_partial)
             tr["symbol"] = s
             parts.append(tr)
         by_combo.append(pd.concat(parts, ignore_index=True))

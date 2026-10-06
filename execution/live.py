@@ -157,7 +157,7 @@ class LiveRunner:
         if slot.state["last_bar"] is not None and last <= pd.Timestamp(slot.state["last_bar"]):
             slot.save()
             return
-        row = slot.cand.signals(bars, **slot.params).iloc[-1]
+        row = slot.cand.compute(bars, slot.params).iloc[-1]
 
         positions = b.positions()
         for p in positions:
@@ -374,6 +374,8 @@ def load_strategy(name: str, marker_dir: Path = ROOT / "holdout"):
     """(Candidate, tham số đóng băng, symbols) từ marker Final Holdout đã QUA."""
     m = json.loads((marker_dir / f"{name}.json").read_text(encoding="utf-8"))
     cand = importlib.import_module(f"strategy.candidates.{name}").CANDIDATE
+    if cand.aux:   # ADR 0003: nguồn dữ liệu phụ cho live chưa xây → từ chối, không chạy lệch backtest
+        raise SystemExit(f"{name}: cần dữ liệu phụ {cand.aux} nhưng live chưa có nguồn aux (ADR 0003)")
     return cand, m["params"], m["symbols"]
 
 

@@ -16,3 +16,4 @@ reports/
 
 # Trạng thái runtime live (Kill-switch, offset Telegram) — không commit
 state/
+data/auxdata/
